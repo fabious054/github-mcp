@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/[transport]/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
