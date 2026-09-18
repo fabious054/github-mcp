@@ -287,6 +287,41 @@ const rawHandler = createMcpHandler(
     );
 
     server.tool(
+      "get_issue",
+      "Traz o conteúdo completo de uma issue: descrição e todos os comentários, na ordem em que foram postados — pra entender o histórico e o raciocínio por trás dela, não só o título.",
+      {
+        ...ownerRepoShape,
+        issue_number: z.number().int().describe("Número da issue/tarefa"),
+      },
+      async ({ account, owner, repo, issue_number }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const issue = await octokit.issues.get({ owner: o, repo: r, issue_number });
+
+        const comments: { user?: { login?: string | null } | null; created_at: string; body?: string | null }[] = [];
+        let page = 1;
+        while (true) {
+          const res = await octokit.issues.listComments({ owner: o, repo: r, issue_number, per_page: 100, page });
+          comments.push(...res.data);
+          if (res.data.length < 100) break;
+          page += 1;
+        }
+
+        const header = `#${issue.data.number} [${issue.data.state}] ${issue.data.title}\nAutor: ${
+          issue.data.user?.login ?? "desconhecido"
+        } · Criada em: ${issue.data.created_at}`;
+        const body = issue.data.body?.trim() ? issue.data.body : "(sem descrição)";
+        const commentLines = comments.length
+          ? comments
+              .map((c) => `— ${c.user?.login ?? "desconhecido"} (${c.created_at}):\n${c.body ?? ""}`)
+              .join("\n\n")
+          : "(sem comentários)";
+
+        const text = `${header}\n\nDescrição:\n${body}\n\nComentários (${comments.length}):\n${commentLines}`;
+        return { content: [{ type: "text", text }] };
+      }
+    );
+
+    server.tool(
       "create_issue",
       "Cria uma nova issue no repositório.",
       {
