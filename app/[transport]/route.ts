@@ -2,7 +2,8 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { Octokit } from "@octokit/rest";
 import { applyPatch } from "diff";
 import { z } from "zod";
-import { oauthEnabled } from "../../lib/oauth";
+import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
+import { getServerOrigin } from "../../lib/mongo";
 
 export const runtime = "nodejs";
 
