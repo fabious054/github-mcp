@@ -22,6 +22,7 @@ estiver definido, o OAuth tem prioridade.
 - `create_branch` — cria uma branch a partir de outra
 - `commit_file` — cria/atualiza um arquivo com uma mensagem de commit (conteúdo inteiro, um arquivo por chamada)
 - `patch_file` — aplica um diff unificado a um arquivo existente numa branch, sem reenviar o conteúdo inteiro
+- `get_ref` — lê o SHA completo (40 caracteres) do commit que uma branch aponta
 - `open_pr` — abre um Pull Request
 - `list_prs` — lista PRs
 - `comment_pr` — comenta num PR
@@ -52,10 +53,15 @@ multi-arquivo:
 
 - `create_blob` — cria um blob (conteúdo bruto) e devolve o SHA
 - `get_tree` — lê uma tree (lista arquivos e SHAs de blob de um commit/branch), útil pra descobrir o SHA de um blob já existente e reaproveitá-lo
+- `get_ref` — lê o SHA completo do commit atual de uma branch, necessário como `parents` de `create_commit` (o GitHub exige o SHA completo, não o abreviado que `commit_file`/`patch_file`/`commit_tree` imprimem na resposta)
 - `create_tree` — monta uma nova tree a partir de uma tree base, aplicando entradas que trazem `content` (blob novo), `patch` (diff unificado sobre o conteúdo atual do caminho na tree base) ou `sha` (blob reaproveitado, ou `null` pra remover o caminho)
-- `create_commit` — cria um commit a partir de uma tree e commit(s)-pai
+- `create_commit` — cria um commit a partir de uma tree e commit(s)-pai (`parents` exige SHA completo — use `get_ref` pra obtê-lo)
 - `update_ref` — aponta uma branch pra um commit específico (não é fast-forward por padrão, a menos que `force: true`)
 - `commit_tree` — **ferramenta de conveniência**: orquestra blob → tree → commit → update_ref numa chamada só, recebendo `branch`, `message` e uma lista de `files` (cada um com `content`, `patch` ou `sha`). É o substituto direto de "várias chamadas de `commit_file`, cada uma com o conteúdo inteiro" quando a mudança toca vários arquivos, edita só um trecho de algum deles, ou pode reaproveitar algum já existente.
+
+`commit_file`, `patch_file` e `commit_tree` agora imprimem o SHA completo do
+commit na resposta (além do abreviado) — útil pra encadear com `create_commit`
+sem precisar de uma chamada extra a `get_ref`.
 
 Todas essas operações são stateless — cada uma é uma chamada isolada à API do
 GitHub, sem precisar guardar nada entre invocações, o que combina bem com o
