@@ -2,7 +2,8 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { Octokit } from "@octokit/rest";
 import { applyPatch } from "diff";
 import { z } from "zod";
-import { oauthEnabled } from "../../lib/oauth";
+import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
+import { getServerOrigin } from "../../lib/mongo";
 
 export const runtime = "nodejs";
 
@@ -737,6 +738,32 @@ const rawHandler = createMcpHandler(
           return `${k}${isDefault} — owners: ${owners}${repo}`;
         });
         return { content: [{ type: "text", text: `Modo de conta fixa (sem OAuth).\n${lines.join("\n")}` }] };
+      }
+    );
+
+    server.tool(
+      "link_account",
+      "Gera um link de autorização único pra vincular uma conta ADICIONAL do GitHub à sua sessão atual (suporte a múltiplas contas). Abra a URL devolvida num navegador e aprove — uma vez vinculada, os repositórios dessa conta passam a ser usados automaticamente (detecção por repositório), sem precisar chamar essa ferramenta de novo pra ela. Só funciona no modo OAuth (autenticado com uma conta primária).",
+      {},
+      async (_args, extra) => {
+        if (!extra?.authInfo) {
+          throw new Error("link_account só funciona no modo OAuth, autenticado com uma conta primária.");
+        }
+        const primaryLogin = extra.authInfo.extra?.githubLogin as string | undefined;
+        if (!primaryLogin) {
+          throw new Error("Não foi possível identificar sua conta primária (login do GitHub ausente na sessão).");
+        }
+        const origin = getServerOrigin();
+        const state = encryptJson({ primaryLogin, iat: nowSeconds() });
+        const url = `${origin}/link-account?state=${state}`;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Abra este link num navegador e autorize com a conta do GitHub que você quer adicionar (válido por 10 minutos):\n${url}`,
+            },
+          ],
+        };
       }
     );
   },
