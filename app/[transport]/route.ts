@@ -182,8 +182,27 @@ const rawHandler = createMcpHandler(
         });
         return {
           content: [
-            { type: "text", text: `Branch '${branch_name}' criada a partir de '${from_branch}' em ${o}/${r}.` },
+            {
+              type: "text",
+              text: `Branch '${branch_name}' criada a partir de '${from_branch}' em ${o}/${r} (SHA completo: ${base.data.object.sha}).`,
+            },
           ],
+        };
+      }
+    );
+
+    server.tool(
+      "get_ref",
+      "Lê o SHA completo (40 caracteres) do commit que uma branch aponta atualmente. Use isso pra obter o SHA de entrada de 'parents' em 'create_commit', já que outras ferramentas (commit_file, patch_file, commit_tree) só imprimem um SHA abreviado no texto de resposta.",
+      {
+        ...ownerRepoShape,
+        branch: z.string().describe("Nome da branch, ex: main"),
+      },
+      async ({ account, owner, repo, branch }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const ref = await octokit.git.getRef({ owner: o, repo: r, ref: `heads/${branch}` });
+        return {
+          content: [{ type: "text", text: `Branch '${branch}' aponta pro commit ${ref.data.object.sha}` }],
         };
       }
     );
@@ -221,11 +240,12 @@ const rawHandler = createMcpHandler(
           sha,
         });
 
+        const commitSha = result.data.commit.sha;
         return {
           content: [
             {
               type: "text",
-              text: `Commit '${result.data.commit.sha?.slice(0, 7)}' criado em '${branch}': ${message}`,
+              text: `Commit '${commitSha?.slice(0, 7)}' (SHA completo: ${commitSha}) criado em '${branch}': ${message}`,
             },
           ],
         };
@@ -264,11 +284,12 @@ const rawHandler = createMcpHandler(
           sha: existing.data.sha,
         });
 
+        const commitSha = result.data.commit.sha;
         return {
           content: [
             {
               type: "text",
-              text: `Commit '${result.data.commit.sha?.slice(0, 7)}' criado em '${branch}' (patch aplicado em '${path}'): ${message}`,
+              text: `Commit '${commitSha?.slice(0, 7)}' (SHA completo: ${commitSha}) criado em '${branch}' (patch aplicado em '${path}'): ${message}`,
             },
           ],
         };
@@ -445,11 +466,11 @@ const rawHandler = createMcpHandler(
 
     server.tool(
       "create_commit",
-      "Cria um objeto de commit apontando pra uma tree e um ou mais commits-pai. Não move nenhuma branch sozinho — use 'update_ref' depois pra apontar a branch pro novo commit.",
+      "Cria um objeto de commit apontando pra uma tree e um ou mais commits-pai. Não move nenhuma branch sozinho — use 'update_ref' depois pra apontar a branch pro novo commit. 'parents' exige o SHA completo (40 caracteres) — use 'get_ref' pra obter o SHA completo do commit atual de uma branch.",
       {
         ...ownerRepoShape,
         tree: z.string().describe("SHA da tree deste commit (de 'create_tree')"),
-        parents: z.array(z.string()).min(1).describe("SHA(s) do(s) commit(s) pai — normalmente o commit atual da branch"),
+        parents: z.array(z.string()).min(1).describe("SHA(s) completo(s) do(s) commit(s) pai — normalmente o commit atual da branch, obtido via 'get_ref'"),
         message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
       },
       async ({ account, owner, repo, tree, parents, message }, extra) => {
@@ -507,7 +528,7 @@ const rawHandler = createMcpHandler(
           content: [
             {
               type: "text",
-              text: `Commit '${commit.data.sha.slice(0, 7)}' criado em '${branch}' com ${resolvedEntries.length} arquivo(s): ${message}`,
+              text: `Commit '${commit.data.sha.slice(0, 7)}' (SHA completo: ${commit.data.sha}) criado em '${branch}' com ${resolvedEntries.length} arquivo(s): ${message}`,
             },
           ],
         };
