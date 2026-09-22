@@ -192,7 +192,7 @@ const rawHandler = createMcpHandler(
     );
 
     server.tool(
-      "get_ref",
+      "get_branch_head",
       "Lê o SHA completo (40 caracteres) do commit que uma branch aponta atualmente. Use isso pra obter o SHA de entrada de 'parents' em 'create_commit', já que outras ferramentas (commit_file, patch_file, commit_tree) só imprimem um SHA abreviado no texto de resposta.",
       {
         ...ownerRepoShape,
@@ -466,11 +466,11 @@ const rawHandler = createMcpHandler(
 
     server.tool(
       "create_commit",
-      "Cria um objeto de commit apontando pra uma tree e um ou mais commits-pai. Não move nenhuma branch sozinho — use 'update_ref' depois pra apontar a branch pro novo commit. 'parents' exige o SHA completo (40 caracteres) — use 'get_ref' pra obter o SHA completo do commit atual de uma branch.",
+      "Cria um objeto de commit apontando pra uma tree e um ou mais commits-pai. Não move nenhuma branch sozinho — use 'update_ref' depois pra apontar a branch pro novo commit. 'parents' exige o SHA completo (40 caracteres) — use 'get_branch_head' pra obter o SHA completo do commit atual de uma branch.",
       {
         ...ownerRepoShape,
         tree: z.string().describe("SHA da tree deste commit (de 'create_tree')"),
-        parents: z.array(z.string()).min(1).describe("SHA(s) completo(s) do(s) commit(s) pai — normalmente o commit atual da branch, obtido via 'get_ref'"),
+        parents: z.array(z.string()).min(1).describe("SHA(s) completo(s) do(s) commit(s) pai — normalmente o commit atual da branch, obtido via 'get_branch_head'"),
         message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
       },
       async ({ account, owner, repo, tree, parents, message }, extra) => {
