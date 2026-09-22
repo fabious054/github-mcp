@@ -767,6 +767,27 @@ const rawHandler = createMcpHandler(
         };
       }
     );
+
+    server.tool(
+      "list_accounts",
+      "Lista as contas do GitHub vinculadas à sua sessão atual: a conta primária (autenticada via OAuth) e qualquer conta adicional vinculada com 'link_account'. Use pra conferir quais contas estão disponíveis pra detecção automática de repositório.",
+      {},
+      async (_args, extra) => {
+        if (!extra?.authInfo) {
+          throw new Error("list_accounts só funciona no modo OAuth, autenticado com uma conta primária.");
+        }
+        const primaryLogin = extra.authInfo.extra?.githubLogin as string | undefined;
+        if (!primaryLogin) {
+          throw new Error("Não foi possível identificar sua conta primária (login do GitHub ausente na sessão).");
+        }
+        const linked = await getLinkedAccounts(primaryLogin);
+        const lines = [
+          `${primaryLogin} [primária]`,
+          ...linked.map((a) => `${a.login} — vinculada em ${a.linkedAt}`),
+        ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
   },
   {},
   { verboseLogs: true, maxDuration: 60 }
