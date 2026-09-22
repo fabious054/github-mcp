@@ -108,6 +108,22 @@ type ResolvedRepo = { owner: string; repo: string; octokit: Octokit; accountName
 
 type OAuthCandidate = { login: string; token: string };
 
+// Monta a lista de contas candidatas da sessão OAuth atual: a conta
+// primária (autenticada) + qualquer conta adicional vinculada com
+// 'link_account'. Reaproveitado por 'resolveRepo' e por 'list_repos_by_account'.
+async function getOAuthCandidates(
+  authInfo: { token: string; extra?: Record<string, unknown> }
+): Promise<{ primaryLogin: string | undefined; candidates: OAuthCandidate[] }> {
+  const primaryLogin =
+    typeof authInfo.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
+  const candidates: OAuthCandidate[] = [{ login: primaryLogin ?? "primária", token: authInfo.token }];
+  if (primaryLogin) {
+    const linked = await getLinkedAccounts(primaryLogin);
+    candidates.push(...linked.map((a) => ({ login: a.login, token: a.token })));
+  }
+  return { primaryLogin, candidates };
+}
+
 // Verifica se um token do GitHub tem acesso de leitura a um repositório
 // específico — usado pra detecção automática de conta quando há mais de
 // uma vinculada à sessão.
@@ -127,22 +143,13 @@ async function resolveRepo(
   repo: string | undefined
 ): Promise<ResolvedRepo> {
   if (authInfo) {
-    const primaryLogin =
-      typeof authInfo.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
+    const { primaryLogin, candidates } = await getOAuthCandidates(authInfo);
     const o = owner || process.env.DEFAULT_OWNER || primaryLogin;
     const r = repo || process.env.DEFAULT_REPO;
     if (!o || !r) {
       throw new Error(
         `owner/repo não informados.${primaryLogin ? ` Seu usuário do GitHub é '${primaryLogin}' — informe também o repo.` : " Informe 'owner' e 'repo'."}`
       );
-    }
-
-    // Candidatas: a conta primária (autenticada via OAuth) + qualquer conta
-    // adicional vinculada com 'link_account'.
-    const candidates: OAuthCandidate[] = [{ login: primaryLogin ?? "primária", token: authInfo.token }];
-    if (primaryLogin) {
-      const linked = await getLinkedAccounts(primaryLogin);
-      candidates.push(...linked.map((a) => ({ login: a.login, token: a.token })));
     }
 
     // Conta informada explicitamente: usa direto (a pessoa já escolheu),
@@ -860,6 +867,59 @@ const rawHandler = createMcpHandler(
           ...linked.map((a) => `${a.login} — vinculada em ${a.linkedAt}`),
         ];
         return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.tool(
+      "list_repos_by_account",
+      "Lista os repositórios acessíveis por uma conta vinculada à sua sessão — a primária, ou uma adicional vinculada com 'link_account'. Útil pra conferir o que cada conta enxerga antes de uma chamada, ou pra escolher o 'account' certo quando 'resolveRepo' pedir por causa de ambiguidade.",
+      {
+        account: z
+          .string()
+          .optional()
+          .describe(
+            "Login da conta vinculada cujos repositórios você quer listar. Se omitido, usa a conta primária da sessão."
+          ),
+      },
+      async ({ account }, extra) => {
+        if (!extra?.authInfo) {
+          throw new Error("list_repos_by_account só funciona no modo OAuth, autenticado com uma conta primária.");
+        }
+        const { primaryLogin, candidates } = await getOAuthCandidates(extra.authInfo);
+        if (!primaryLogin) {
+          throw new Error("Não foi possível identificar sua conta primária (login do GitHub ausente na sessão).");
+        }
+        const target = account
+          ? candidates.find((c) => c.login.toLowerCase() === account.toLowerCase())
+          : candidates[0];
+        if (!target) {
+          throw new Error(
+            `Conta '${account}' não está vinculada à sua sessão. Contas disponíveis: ${candidates
+              .map((c) => c.login)
+              .join(", ")}. Use 'link_account' pra vincular uma nova.`
+          );
+        }
+
+        const octokit = new Octokit({ auth: target.token });
+        const repos: string[] = [];
+        let page = 1;
+        while (true) {
+          const res = await octokit.repos.listForAuthenticatedUser({ per_page: 100, page, sort: "full_name" });
+          repos.push(...res.data.map((r) => `${r.full_name}${r.private ? " (privado)" : ""}`));
+          if (res.data.length < 100) break;
+          page += 1;
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Repositórios acessíveis por '${target.login}' (${repos.length}):\n${
+                repos.length ? repos.join("\n") : "(nenhum)"
+              }`,
+            },
+          ],
+        };
       }
     );
   },
