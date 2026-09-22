@@ -20,7 +20,7 @@ estiver definido, o OAuth tem prioridade.
 ## Ferramentas disponíveis
 
 - `create_branch` — cria uma branch a partir de outra
-- `commit_file` — cria/atualiza um arquivo com uma mensagem de commit
+- `commit_file` — cria/atualiza um arquivo com uma mensagem de commit (conteúdo inteiro, um arquivo por chamada)
 - `open_pr` — abre um Pull Request
 - `list_prs` — lista PRs
 - `comment_pr` — comenta num PR
@@ -30,6 +30,26 @@ estiver definido, o OAuth tem prioridade.
 - `read_file` — lê o conteúdo de um arquivo
 - `search_code` — busca código no repositório
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
+
+### Git Data API — commits grandes ou multi-arquivo
+
+Pra mudanças grandes ou espalhadas por muitos arquivos, `commit_file` obriga
+reenviar o conteúdo inteiro de cada arquivo, um por chamada. Essas ferramentas
+expõem o modelo de dados do Git diretamente (blob → tree → commit → ref),
+permitindo reaproveitar um blob já existente por SHA (arquivo que não mudou
+entre commits nunca precisa ser reenviado) e agrupar vários arquivos num
+único commit atômico:
+
+- `create_blob` — cria um blob (conteúdo bruto) e devolve o SHA
+- `get_tree` — lê uma tree (lista arquivos e SHAs de blob de um commit/branch), útil pra descobrir o SHA de um blob já existente e reaproveitá-lo
+- `create_tree` — monta uma nova tree a partir de uma tree base, aplicando entradas que trazem `content` (blob novo) ou `sha` (blob reaproveitado) ou `sha: null` (remove o caminho)
+- `create_commit` — cria um commit a partir de uma tree e commit(s)-pai
+- `update_ref` — aponta uma branch pra um commit específico (não é fast-forward por padrão, a menos que `force: true`)
+- `commit_tree` — **ferramenta de conveniência**: orquestra blob → tree → commit → update_ref numa chamada só, recebendo `branch`, `message` e uma lista de `files` (cada um com `content` ou `sha`). É o substituto direto de "várias chamadas de `commit_file`, cada uma com o conteúdo inteiro" quando a mudança toca vários arquivos ou pode reaproveitar algum já existente.
+
+Todas essas operações são stateless — cada uma é uma chamada isolada à API do
+GitHub, sem precisar guardar nada entre invocações, o que combina bem com o
+deploy serverless na Vercel.
 
 Todas aceitam `owner`/`repo` opcionais. No modo OAuth, se você não informar
 `owner`, o servidor tenta usar o seu próprio usuário do GitHub como padrão
