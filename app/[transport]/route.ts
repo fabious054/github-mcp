@@ -218,6 +218,192 @@ const rawHandler = createMcpHandler(
       }
     );
 
+    // ---------- GIT DATA API (blobs/trees/commits) ----------
+    //
+    // Pensado pra commits grandes ou multi-arquivo: em vez de reenviar o
+    // conteúdo inteiro de cada arquivo em `commit_file`, um blob pode ser
+    // criado uma única vez e reaproveitado por SHA (arquivo que não mudou
+    // entre commits nunca precisa ser reenviado), e uma árvore com várias
+    // entradas vira um único commit atômico. Todas essas operações são
+    // stateless — cada chamada é uma requisição isolada à API do GitHub, o
+    // que funciona bem com o deploy serverless na Vercel (sem filesystem ou
+    // estado compartilhado entre invocações).
+
+    server.tool(
+      "create_blob",
+      "Cria um blob (objeto de conteúdo bruto do Git) e devolve o SHA dele. Use pra criar o conteúdo de um arquivo antes de referenciá-lo numa tree (via 'create_tree' ou 'commit_tree'), ou pra obter o SHA de um conteúdo específico.",
+      {
+        ...ownerRepoShape,
+        content: z.string().describe("Conteúdo do blob"),
+        encoding: z
+          .enum(["utf-8", "base64"])
+          .default("utf-8")
+          .describe("Codificação de 'content' — use 'base64' para arquivos binários"),
+      },
+      async ({ account, owner, repo, content, encoding }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const blob = await octokit.git.createBlob({ owner: o, repo: r, content, encoding });
+        return { content: [{ type: "text", text: `Blob criado: ${blob.data.sha}` }] };
+      }
+    );
+
+    server.tool(
+      "get_tree",
+      "Lê uma tree (árvore de arquivos) do Git — lista caminhos e SHAs de blob de um commit/branch/tree. Use pra descobrir o SHA de um blob já existente no repositório (e assim reaproveitá-lo sem reenviar conteúdo) antes de montar uma tree nova.",
+      {
+        ...ownerRepoShape,
+        tree_sha: z
+          .string()
+          .default("main")
+          .describe("SHA da tree, ou um branch/tag/commit — a tree associada é resolvida automaticamente"),
+        recursive: z.boolean().default(false).describe("Se true, lista recursivamente todas as subpastas"),
+      },
+      async ({ account, owner, repo, tree_sha, recursive }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const tree = await octokit.git.getTree({
+          owner: o,
+          repo: r,
+          tree_sha,
+          recursive: recursive ? "true" : undefined,
+        });
+        const lines = tree.data.tree.map(
+          (e) => `${e.type} ${e.path} — ${e.sha}${e.type === "blob" ? ` (${e.size ?? "?"} bytes)` : ""}`
+        );
+        return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "Tree vazia." }] };
+      }
+    );
+
+    const treeEntryShape = z.object({
+      path: z.string().describe("Caminho do arquivo, ex: src/handlers/foo.js"),
+      mode: z
+        .enum(["100644", "100755", "040000", "160000", "120000"])
+        .default("100644")
+        .describe(
+          "Modo do arquivo: 100644 (normal), 100755 (executável), 040000 (subdiretório), 160000 (submódulo), 120000 (symlink)"
+        ),
+      content: z.string().optional().describe("Conteúdo do arquivo (cria um blob novo). Não usar junto com 'sha'."),
+      encoding: z.enum(["utf-8", "base64"]).default("utf-8").describe("Codificação de 'content', quando informado"),
+      sha: z
+        .union([z.string(), z.null()])
+        .optional()
+        .describe(
+          "SHA de um blob já existente pra reaproveitar sem reenviar conteúdo, ou null para remover este caminho"
+        ),
+    });
+
+    async function resolveTreeEntries(
+      octokit: Octokit,
+      o: string,
+      r: string,
+      entries: z.infer<typeof treeEntryShape>[]
+    ) {
+      return Promise.all(
+        entries.map(async (e) => {
+          if (e.content !== undefined && e.sha !== undefined) {
+            throw new Error(`Entrada '${e.path}': informe 'content' OU 'sha', não os dois.`);
+          }
+          let sha = e.sha;
+          if (e.content !== undefined) {
+            const blob = await octokit.git.createBlob({ owner: o, repo: r, content: e.content, encoding: e.encoding });
+            sha = blob.data.sha;
+          }
+          return { path: e.path, mode: e.mode, type: "blob" as const, sha: sha ?? null };
+        })
+      );
+    }
+
+    server.tool(
+      "create_tree",
+      "Monta uma nova tree a partir de uma tree base, aplicando as entradas informadas. Cada entrada pode trazer 'content' (cria um blob novo na hora) ou 'sha' (reaproveita um blob já existente, sem reenviar conteúdo — útil pra arquivo grande que não mudou entre commits). 'sha: null' remove o caminho da tree.",
+      {
+        ...ownerRepoShape,
+        base_tree: z
+          .string()
+          .optional()
+          .describe("SHA da tree base (normalmente a tree do commit atual da branch). Se omitido, monta uma tree do zero."),
+        entries: z.array(treeEntryShape).min(1).describe("Lista de arquivos a criar/atualizar/remover nesta tree"),
+      },
+      async ({ account, owner, repo, base_tree, entries }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const resolvedEntries = await resolveTreeEntries(octokit, o, r, entries);
+        const tree = await octokit.git.createTree({ owner: o, repo: r, base_tree, tree: resolvedEntries as any });
+        return {
+          content: [{ type: "text", text: `Tree criada: ${tree.data.sha} (${resolvedEntries.length} entrada(s))` }],
+        };
+      }
+    );
+
+    server.tool(
+      "create_commit",
+      "Cria um objeto de commit apontando pra uma tree e um ou mais commits-pai. Não move nenhuma branch sozinho — use 'update_ref' depois pra apontar a branch pro novo commit.",
+      {
+        ...ownerRepoShape,
+        tree: z.string().describe("SHA da tree deste commit (de 'create_tree')"),
+        parents: z.array(z.string()).min(1).describe("SHA(s) do(s) commit(s) pai — normalmente o commit atual da branch"),
+        message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
+      },
+      async ({ account, owner, repo, tree, parents, message }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const commit = await octokit.git.createCommit({ owner: o, repo: r, tree, parents, message });
+        return { content: [{ type: "text", text: `Commit criado: ${commit.data.sha} — ${message}` }] };
+      }
+    );
+
+    server.tool(
+      "update_ref",
+      "Aponta uma branch pra um commit específico. Por padrão recusa mover a branch se não for um fast-forward (evita sobrescrever trabalho concorrente) — use 'force: true' só quando tiver certeza.",
+      {
+        ...ownerRepoShape,
+        branch: z.string().describe("Nome da branch a mover, ex: feat/146-descricao"),
+        sha: z.string().describe("SHA do commit pro qual a branch deve apontar"),
+        force: z.boolean().default(false).describe("Se true, força o update mesmo que não seja um fast-forward"),
+      },
+      async ({ account, owner, repo, branch, sha, force }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        await octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha, force });
+        return { content: [{ type: "text", text: `Branch '${branch}' agora aponta pra ${sha}.` }] };
+      }
+    );
+
+    server.tool(
+      "commit_tree",
+      "Cria um commit atômico com vários arquivos de uma vez, orquestrando blob → tree → commit → update_ref numa chamada só. Cada arquivo pode trazer 'content' (cria um blob novo) ou 'sha' (reaproveita um blob já existente — pra arquivo grande que não mudou entre commits, sem reenviar conteúdo nenhum) ou 'sha: null' (remove o arquivo). Ideal pra mudanças grandes ou espalhadas por muitos arquivos, onde 'commit_file' exigiria uma chamada por arquivo com o conteúdo inteiro toda vez.",
+      {
+        ...ownerRepoShape,
+        branch: z.string().describe("Branch onde o commit será feito"),
+        message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
+        files: z.array(treeEntryShape).min(1).describe("Arquivos a criar/atualizar/remover neste commit"),
+      },
+      async ({ account, owner, repo, branch, message, files }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+
+        const ref = await octokit.git.getRef({ owner: o, repo: r, ref: `heads/${branch}` });
+        const parentSha = ref.data.object.sha;
+        const parentCommit = await octokit.git.getCommit({ owner: o, repo: r, commit_sha: parentSha });
+        const baseTree = parentCommit.data.tree.sha;
+
+        const resolvedEntries = await resolveTreeEntries(octokit, o, r, files);
+        const tree = await octokit.git.createTree({ owner: o, repo: r, base_tree: baseTree, tree: resolvedEntries as any });
+        const commit = await octokit.git.createCommit({
+          owner: o,
+          repo: r,
+          tree: tree.data.sha,
+          parents: [parentSha],
+          message,
+        });
+        await octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha: commit.data.sha });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Commit '${commit.data.sha.slice(0, 7)}' criado em '${branch}' com ${resolvedEntries.length} arquivo(s): ${message}`,
+            },
+          ],
+        };
+      }
+    );
+
     // ---------- PULL REQUESTS ----------
 
     server.tool(
