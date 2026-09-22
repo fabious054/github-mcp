@@ -1,5 +1,6 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { Octokit } from "@octokit/rest";
+import { applyPatch } from "diff";
 import { z } from "zod";
 import { oauthEnabled } from "../../lib/oauth";
 
@@ -145,6 +146,19 @@ const ownerRepoShape = {
   repo: z.string().optional().describe("Nome do repositório. Opcional se houver um padrão configurado."),
 };
 
+// Aplica um diff unificado (formato 'diff -u' / 'git diff') a um texto. Usado
+// tanto por 'patch_file' quanto pelas entradas com 'patch' em
+// 'create_tree'/'commit_tree'.
+function applyUnifiedPatch(original: string, patchText: string): string {
+  const result = applyPatch(original, patchText);
+  if (result === false) {
+    throw new Error(
+      "Não foi possível aplicar o patch — o conteúdo atual do arquivo provavelmente mudou desde que o diff foi gerado. Busque o conteúdo atual (read_file ou get_tree) e gere o patch de novo a partir dele."
+    );
+  }
+  return result;
+}
+
 const rawHandler = createMcpHandler(
   (server) => {
     // ---------- GIT BÁSICO ----------
@@ -218,6 +232,49 @@ const rawHandler = createMcpHandler(
       }
     );
 
+    server.tool(
+      "patch_file",
+      "Aplica um diff unificado (formato 'diff -u' ou 'git diff') a um arquivo existente numa branch, sem precisar reenviar o conteúdo inteiro — ideal pra editar um trecho pequeno dentro de um arquivo grande. Busca o conteúdo atual do arquivo na branch, aplica o patch, e commita só o resultado.",
+      {
+        ...ownerRepoShape,
+        branch: z.string().describe("Branch onde o commit será feito"),
+        path: z.string().describe("Caminho do arquivo a corrigir, ex: src/handlers/foo.js"),
+        patch: z
+          .string()
+          .describe("Diff unificado (formato 'diff -u' ou 'git diff') a aplicar sobre o conteúdo atual deste arquivo"),
+        message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
+      },
+      async ({ account, owner, repo, branch, path, patch, message }, extra) => {
+        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+
+        const existing = await octokit.repos.getContent({ owner: o, repo: r, path, ref: branch });
+        if (Array.isArray(existing.data) || !("content" in existing.data)) {
+          throw new Error(`'${path}' não é um arquivo (ou não existe) em '${branch}'.`);
+        }
+        const currentContent = Buffer.from(existing.data.content, "base64").toString("utf-8");
+        const patchedContent = applyUnifiedPatch(currentContent, patch);
+
+        const result = await octokit.repos.createOrUpdateFileContents({
+          owner: o,
+          repo: r,
+          path,
+          message,
+          content: Buffer.from(patchedContent, "utf-8").toString("base64"),
+          branch,
+          sha: existing.data.sha,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Commit '${result.data.commit.sha?.slice(0, 7)}' criado em '${branch}' (patch aplicado em '${path}'): ${message}`,
+            },
+          ],
+        };
+      }
+    );
+
     // ---------- GIT DATA API (blobs/trees/commits) ----------
     //
     // Pensado pra commits grandes ou multi-arquivo: em vez de reenviar o
@@ -228,6 +285,11 @@ const rawHandler = createMcpHandler(
     // stateless — cada chamada é uma requisição isolada à API do GitHub, o
     // que funciona bem com o deploy serverless na Vercel (sem filesystem ou
     // estado compartilhado entre invocações).
+    //
+    // Cada entrada de tree também aceita 'patch' (diff unificado aplicado
+    // sobre o conteúdo atual daquele caminho na tree base) — pra editar um
+    // trecho pequeno de um arquivo grande dentro de um commit multi-arquivo,
+    // sem reenviar o conteúdo inteiro dele nem tratá-lo à parte.
 
     server.tool(
       "create_blob",
@@ -281,8 +343,14 @@ const rawHandler = createMcpHandler(
         .describe(
           "Modo do arquivo: 100644 (normal), 100755 (executável), 040000 (subdiretório), 160000 (submódulo), 120000 (symlink)"
         ),
-      content: z.string().optional().describe("Conteúdo do arquivo (cria um blob novo). Não usar junto com 'sha'."),
+      content: z.string().optional().describe("Conteúdo completo do arquivo (cria um blob novo). Use pra arquivo novo ou reescrita total."),
       encoding: z.enum(["utf-8", "base64"]).default("utf-8").describe("Codificação de 'content', quando informado"),
+      patch: z
+        .string()
+        .optional()
+        .describe(
+          "Diff unificado a aplicar sobre o conteúdo atual deste caminho na tree base — pra editar um trecho pequeno sem reenviar o arquivo inteiro. Exige que o caminho já exista na tree base."
+        ),
       sha: z
         .union([z.string(), z.null()])
         .optional()
@@ -291,22 +359,62 @@ const rawHandler = createMcpHandler(
         ),
     });
 
+    async function buildPathShaMap(octokit: Octokit, o: string, r: string, baseTreeSha: string) {
+      const tree = await octokit.git.getTree({ owner: o, repo: r, tree_sha: baseTreeSha, recursive: "true" });
+      const map = new Map<string, string>();
+      for (const e of tree.data.tree) {
+        if (e.type === "blob" && e.path && e.sha) map.set(e.path, e.sha);
+      }
+      return map;
+    }
+
     async function resolveTreeEntries(
       octokit: Octokit,
       o: string,
       r: string,
-      entries: z.infer<typeof treeEntryShape>[]
+      entries: z.infer<typeof treeEntryShape>[],
+      baseTreeSha?: string
     ) {
+      let pathShaMap: Map<string, string> | null = null;
+      const getPathShaMap = async () => {
+        if (!pathShaMap) {
+          if (!baseTreeSha) {
+            throw new Error("Entradas com 'patch' exigem 'base_tree' (em 'create_tree') — 'commit_tree' já resolve isso sozinho a partir da branch.");
+          }
+          pathShaMap = await buildPathShaMap(octokit, o, r, baseTreeSha);
+        }
+        return pathShaMap;
+      };
+
       return Promise.all(
         entries.map(async (e) => {
-          if (e.content !== undefined && e.sha !== undefined) {
-            throw new Error(`Entrada '${e.path}': informe 'content' OU 'sha', não os dois.`);
+          const provided = [e.content !== undefined, e.sha !== undefined, e.patch !== undefined].filter(
+            Boolean
+          ).length;
+          if (provided > 1) {
+            throw new Error(`Entrada '${e.path}': informe apenas um de 'content', 'sha' ou 'patch'.`);
           }
+
           let sha = e.sha;
+
           if (e.content !== undefined) {
             const blob = await octokit.git.createBlob({ owner: o, repo: r, content: e.content, encoding: e.encoding });
             sha = blob.data.sha;
+          } else if (e.patch !== undefined) {
+            const map = await getPathShaMap();
+            const currentSha = map.get(e.path);
+            if (!currentSha) {
+              throw new Error(
+                `Entrada '${e.path}': caminho não encontrado na tree base pra aplicar o patch (arquivo novo? use 'content' em vez de 'patch').`
+              );
+            }
+            const currentBlob = await octokit.git.getBlob({ owner: o, repo: r, file_sha: currentSha });
+            const currentContent = Buffer.from(currentBlob.data.content, "base64").toString("utf-8");
+            const patchedContent = applyUnifiedPatch(currentContent, e.patch);
+            const blob = await octokit.git.createBlob({ owner: o, repo: r, content: patchedContent, encoding: "utf-8" });
+            sha = blob.data.sha;
           }
+
           return { path: e.path, mode: e.mode, type: "blob" as const, sha: sha ?? null };
         })
       );
@@ -314,18 +422,20 @@ const rawHandler = createMcpHandler(
 
     server.tool(
       "create_tree",
-      "Monta uma nova tree a partir de uma tree base, aplicando as entradas informadas. Cada entrada pode trazer 'content' (cria um blob novo na hora) ou 'sha' (reaproveita um blob já existente, sem reenviar conteúdo — útil pra arquivo grande que não mudou entre commits). 'sha: null' remove o caminho da tree.",
+      "Monta uma nova tree a partir de uma tree base, aplicando as entradas informadas. Cada entrada pode trazer 'content' (cria um blob novo), 'patch' (aplica um diff unificado sobre o conteúdo atual do caminho na tree base — pra editar um trecho pequeno sem reenviar o arquivo inteiro) ou 'sha' (reaproveita um blob já existente, sem reenviar conteúdo). 'sha: null' remove o caminho da tree.",
       {
         ...ownerRepoShape,
         base_tree: z
           .string()
           .optional()
-          .describe("SHA da tree base (normalmente a tree do commit atual da branch). Se omitido, monta uma tree do zero."),
+          .describe(
+            "SHA da tree base (normalmente a tree do commit atual da branch). Se omitido, monta uma tree do zero — nesse caso, entradas com 'patch' não são possíveis."
+          ),
         entries: z.array(treeEntryShape).min(1).describe("Lista de arquivos a criar/atualizar/remover nesta tree"),
       },
       async ({ account, owner, repo, base_tree, entries }, extra) => {
         const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
-        const resolvedEntries = await resolveTreeEntries(octokit, o, r, entries);
+        const resolvedEntries = await resolveTreeEntries(octokit, o, r, entries, base_tree);
         const tree = await octokit.git.createTree({ owner: o, repo: r, base_tree, tree: resolvedEntries as any });
         return {
           content: [{ type: "text", text: `Tree criada: ${tree.data.sha} (${resolvedEntries.length} entrada(s))` }],
@@ -367,7 +477,7 @@ const rawHandler = createMcpHandler(
 
     server.tool(
       "commit_tree",
-      "Cria um commit atômico com vários arquivos de uma vez, orquestrando blob → tree → commit → update_ref numa chamada só. Cada arquivo pode trazer 'content' (cria um blob novo) ou 'sha' (reaproveita um blob já existente — pra arquivo grande que não mudou entre commits, sem reenviar conteúdo nenhum) ou 'sha: null' (remove o arquivo). Ideal pra mudanças grandes ou espalhadas por muitos arquivos, onde 'commit_file' exigiria uma chamada por arquivo com o conteúdo inteiro toda vez.",
+      "Cria um commit atômico com vários arquivos de uma vez, orquestrando blob → tree → commit → update_ref numa chamada só. Cada arquivo pode trazer 'content' (cria um blob novo), 'patch' (aplica um diff unificado sobre o conteúdo atual do arquivo na branch — pra editar um trecho pequeno sem reenviar o arquivo inteiro), 'sha' (reaproveita um blob já existente — pra arquivo que não mudou entre commits, sem reenviar conteúdo nenhum) ou 'sha: null' (remove o arquivo). Ideal pra mudanças grandes ou espalhadas por muitos arquivos, onde 'commit_file' exigiria uma chamada por arquivo com o conteúdo inteiro toda vez.",
       {
         ...ownerRepoShape,
         branch: z.string().describe("Branch onde o commit será feito"),
@@ -382,7 +492,7 @@ const rawHandler = createMcpHandler(
         const parentCommit = await octokit.git.getCommit({ owner: o, repo: r, commit_sha: parentSha });
         const baseTree = parentCommit.data.tree.sha;
 
-        const resolvedEntries = await resolveTreeEntries(octokit, o, r, files);
+        const resolvedEntries = await resolveTreeEntries(octokit, o, r, files, baseTree);
         const tree = await octokit.git.createTree({ owner: o, repo: r, base_tree: baseTree, tree: resolvedEntries as any });
         const commit = await octokit.git.createCommit({
           owner: o,
