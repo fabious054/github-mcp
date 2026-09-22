@@ -106,23 +106,97 @@ function resolveStaticAccount(accountName?: string, owner?: string): { name: str
 
 type ResolvedRepo = { owner: string; repo: string; octokit: Octokit; accountName: string };
 
-function resolveRepo(
+type OAuthCandidate = { login: string; token: string };
+
+// Verifica se um token do GitHub tem acesso de leitura a um repositório
+// específico — usado pra detecção automática de conta quando há mais de
+// uma vinculada à sessão.
+async function candidateHasAccess(token: string, owner: string, repo: string): Promise<boolean> {
+  try {
+    await new Octokit({ auth: token }).repos.get({ owner, repo });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveRepo(
   authInfo: { token: string; extra?: Record<string, unknown> } | undefined,
   accountName: string | undefined,
   owner: string | undefined,
   repo: string | undefined
-): ResolvedRepo {
+): Promise<ResolvedRepo> {
   if (authInfo) {
-    const githubLogin =
+    const primaryLogin =
       typeof authInfo.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
-    const o = owner || process.env.DEFAULT_OWNER || githubLogin;
+    const o = owner || process.env.DEFAULT_OWNER || primaryLogin;
     const r = repo || process.env.DEFAULT_REPO;
     if (!o || !r) {
       throw new Error(
-        `owner/repo não informados.${githubLogin ? ` Seu usuário do GitHub é '${githubLogin}' — informe também o repo.` : " Informe 'owner' e 'repo'."}`
+        `owner/repo não informados.${primaryLogin ? ` Seu usuário do GitHub é '${primaryLogin}' — informe também o repo.` : " Informe 'owner' e 'repo'."}`
       );
     }
-    return { owner: o, repo: r, octokit: new Octokit({ auth: authInfo.token }), accountName: githubLogin ?? "oauth" };
+
+    // Candidatas: a conta primária (autenticada via OAuth) + qualquer conta
+    // adicional vinculada com 'link_account'.
+    const candidates: OAuthCandidate[] = [{ login: primaryLogin ?? "primária", token: authInfo.token }];
+    if (primaryLogin) {
+      const linked = await getLinkedAccounts(primaryLogin);
+      candidates.push(...linked.map((a) => ({ login: a.login, token: a.token })));
+    }
+
+    // Conta informada explicitamente: usa direto (a pessoa já escolheu),
+    // sem checar acesso via API.
+    if (accountName) {
+      const match = candidates.find((c) => c.login.toLowerCase() === accountName.toLowerCase());
+      if (!match) {
+        throw new Error(
+          `Conta '${accountName}' não está vinculada à sua sessão. Contas disponíveis: ${candidates
+            .map((c) => c.login)
+            .join(", ")}. Use 'link_account' pra vincular uma nova.`
+        );
+      }
+      return { owner: o, repo: r, octokit: new Octokit({ auth: match.token }), accountName: match.login };
+    }
+
+    // Só uma conta na sessão (fluxo de sempre, sem contas adicionais
+    // vinculadas): usa ela direto, sem chamada extra à API do GitHub.
+    if (candidates.length === 1) {
+      return {
+        owner: o,
+        repo: r,
+        octokit: new Octokit({ auth: candidates[0].token }),
+        accountName: candidates[0].login,
+      };
+    }
+
+    // Múltiplas contas vinculadas e nenhuma informada: detecta
+    // automaticamente checando qual(is) tem acesso ao repositório-alvo.
+    const checked = await Promise.all(
+      candidates.map(async (c) => ((await candidateHasAccess(c.token, o, r)) ? c : null))
+    );
+    const withAccess = checked.filter((c): c is OAuthCandidate => c !== null);
+
+    if (withAccess.length === 1) {
+      return {
+        owner: o,
+        repo: r,
+        octokit: new Octokit({ auth: withAccess[0].token }),
+        accountName: withAccess[0].login,
+      };
+    }
+    if (withAccess.length === 0) {
+      throw new Error(
+        `Nenhuma das suas contas vinculadas tem acesso a '${o}/${r}'. Contas disponíveis: ${candidates
+          .map((c) => c.login)
+          .join(", ")}. Vincule a conta certa com 'link_account', ou confira o nome do repositório.`
+      );
+    }
+    throw new Error(
+      `Mais de uma conta vinculada tem acesso a '${o}/${r}' (${withAccess
+        .map((c) => c.login)
+        .join(", ")}). Repita a chamada informando 'account' com a conta desejada.`
+    );
   }
 
   const { name, config } = resolveStaticAccount(accountName, owner);
@@ -139,7 +213,7 @@ const ownerRepoShape = {
     .string()
     .optional()
     .describe(
-      "Nome da conta pré-configurada a usar (só relevante no modo sem OAuth). Ignorado quando o acesso é via login do GitHub."
+      "Login da conta do GitHub a usar para esta chamada. No modo sem OAuth, é o nome da conta pré-configurada. No modo OAuth, é opcional: por padrão o servidor detecta sozinho, entre a conta primária e as vinculadas com 'link_account', qual tem acesso ao repositório informado — só é preciso informar 'account' se mais de uma tiver acesso ao mesmo repositório (a chamada retorna erro pedindo isso quando for o caso)."
     ),
   owner: z
     .string()
@@ -174,7 +248,7 @@ const rawHandler = createMcpHandler(
         from_branch: z.string().default("main").describe("Branch base para criar a nova a partir dela"),
       },
       async ({ account, owner, repo, branch_name, from_branch }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const base = await octokit.git.getRef({ owner: o, repo: r, ref: `heads/${from_branch}` });
         await octokit.git.createRef({
           owner: o,
@@ -201,7 +275,7 @@ const rawHandler = createMcpHandler(
         branch: z.string().describe("Nome da branch, ex: main"),
       },
       async ({ account, owner, repo, branch }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const ref = await octokit.git.getRef({ owner: o, repo: r, ref: `heads/${branch}` });
         return {
           content: [{ type: "text", text: `Branch '${branch}' aponta pro commit ${ref.data.object.sha}` }],
@@ -220,7 +294,7 @@ const rawHandler = createMcpHandler(
         message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
       },
       async ({ account, owner, repo, branch, path, content, message }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
 
         let sha: string | undefined;
         try {
@@ -267,7 +341,7 @@ const rawHandler = createMcpHandler(
         message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
       },
       async ({ account, owner, repo, branch, path, patch, message }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
 
         const existing = await octokit.repos.getContent({ owner: o, repo: r, path, ref: branch });
         if (Array.isArray(existing.data) || !("content" in existing.data)) {
@@ -326,7 +400,7 @@ const rawHandler = createMcpHandler(
           .describe("Codificação de 'content' — use 'base64' para arquivos binários"),
       },
       async ({ account, owner, repo, content, encoding }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const blob = await octokit.git.createBlob({ owner: o, repo: r, content, encoding });
         return { content: [{ type: "text", text: `Blob criado: ${blob.data.sha}` }] };
       }
@@ -344,7 +418,7 @@ const rawHandler = createMcpHandler(
         recursive: z.boolean().default(false).describe("Se true, lista recursivamente todas as subpastas"),
       },
       async ({ account, owner, repo, tree_sha, recursive }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const tree = await octokit.git.getTree({
           owner: o,
           repo: r,
@@ -457,7 +531,7 @@ const rawHandler = createMcpHandler(
         entries: z.array(treeEntryShape).min(1).describe("Lista de arquivos a criar/atualizar/remover nesta tree"),
       },
       async ({ account, owner, repo, base_tree, entries }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const resolvedEntries = await resolveTreeEntries(octokit, o, r, entries, base_tree);
         const tree = await octokit.git.createTree({ owner: o, repo: r, base_tree, tree: resolvedEntries as any });
         return {
@@ -476,7 +550,7 @@ const rawHandler = createMcpHandler(
         message: z.string().describe("Mensagem de commit seguindo conventional commits (feat:, fix:, chore:, etc.)"),
       },
       async ({ account, owner, repo, tree, parents, message }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const commit = await octokit.git.createCommit({ owner: o, repo: r, tree, parents, message });
         return { content: [{ type: "text", text: `Commit criado: ${commit.data.sha} — ${message}` }] };
       }
@@ -492,7 +566,7 @@ const rawHandler = createMcpHandler(
         force: z.boolean().default(false).describe("Se true, força o update mesmo que não seja um fast-forward"),
       },
       async ({ account, owner, repo, branch, sha, force }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         await octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha, force });
         return { content: [{ type: "text", text: `Branch '${branch}' agora aponta pra ${sha}.` }] };
       }
@@ -508,7 +582,7 @@ const rawHandler = createMcpHandler(
         files: z.array(treeEntryShape).min(1).describe("Arquivos a criar/atualizar/remover neste commit"),
       },
       async ({ account, owner, repo, branch, message, files }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
 
         const ref = await octokit.git.getRef({ owner: o, repo: r, ref: `heads/${branch}` });
         const parentSha = ref.data.object.sha;
@@ -550,7 +624,7 @@ const rawHandler = createMcpHandler(
         body: z.string().optional().describe("Descrição do PR"),
       },
       async ({ account, owner, repo, head, base, title, body }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const pr = await octokit.pulls.create({ owner: o, repo: r, head, base, title, body });
         return { content: [{ type: "text", text: `PR #${pr.data.number} aberto: ${pr.data.html_url}` }] };
       }
@@ -564,7 +638,7 @@ const rawHandler = createMcpHandler(
         state: z.enum(["open", "closed", "all"]).default("open"),
       },
       async ({ account, owner, repo, state }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const prs = await octokit.pulls.list({ owner: o, repo: r, state, per_page: 30 });
         const lines = prs.data.map((p) => `#${p.number} [${p.state}] ${p.title} (${p.head.ref} → ${p.base.ref})`);
         return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "Nenhum PR encontrado." }] };
@@ -580,7 +654,7 @@ const rawHandler = createMcpHandler(
         body: z.string().describe("Texto do comentário"),
       },
       async ({ account, owner, repo, pr_number, body }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const comment = await octokit.issues.createComment({ owner: o, repo: r, issue_number: pr_number, body });
         return { content: [{ type: "text", text: `Comentário postado no PR #${pr_number}: ${comment.data.html_url}` }] };
       }
@@ -596,7 +670,7 @@ const rawHandler = createMcpHandler(
         state: z.enum(["open", "closed", "all"]).default("open"),
       },
       async ({ account, owner, repo, state }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const issues = await octokit.issues.listForRepo({ owner: o, repo: r, state, per_page: 30 });
         const lines = issues.data
           .filter((i) => !i.pull_request)
@@ -613,7 +687,7 @@ const rawHandler = createMcpHandler(
         issue_number: z.number().int().describe("Número da issue/tarefa"),
       },
       async ({ account, owner, repo, issue_number }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const issue = await octokit.issues.get({ owner: o, repo: r, issue_number });
 
         const comments: { user?: { login?: string | null } | null; created_at: string; body?: string | null }[] = [];
@@ -649,7 +723,7 @@ const rawHandler = createMcpHandler(
         body: z.string().optional(),
       },
       async ({ account, owner, repo, title, body }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const issue = await octokit.issues.create({ owner: o, repo: r, title, body });
         return { content: [{ type: "text", text: `Issue #${issue.data.number} criada: ${issue.data.html_url}` }] };
       }
@@ -664,7 +738,7 @@ const rawHandler = createMcpHandler(
         body: z.string().describe("Texto do comentário (ex: relatório de QA)"),
       },
       async ({ account, owner, repo, issue_number, body }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const comment = await octokit.issues.createComment({ owner: o, repo: r, issue_number, body });
         return {
           content: [{ type: "text", text: `Comentário postado na issue #${issue_number}: ${comment.data.html_url}` }],
@@ -683,7 +757,7 @@ const rawHandler = createMcpHandler(
         ref: z.string().default("main").describe("Branch, tag ou commit SHA"),
       },
       async ({ account, owner, repo, path, ref }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const res = await octokit.repos.getContent({ owner: o, repo: r, path, ref });
         if (Array.isArray(res.data) || !("content" in res.data)) {
           return { content: [{ type: "text", text: `'${path}' é um diretório, não um arquivo.` }] };
@@ -701,7 +775,7 @@ const rawHandler = createMcpHandler(
         query: z.string().describe("Termo de busca (sintaxe de busca de código do GitHub)"),
       },
       async ({ account, owner, repo, query }, extra) => {
-        const { owner: o, repo: r, octokit } = resolveRepo(extra?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = await resolveRepo(extra?.authInfo, account, owner, repo);
         const res = await octokit.search.code({ q: `${query} repo:${o}/${r}` });
         const lines = res.data.items.map((i) => `${i.path} — ${i.html_url}`);
         return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "Nada encontrado." }] };
