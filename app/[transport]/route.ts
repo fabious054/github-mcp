@@ -4,6 +4,7 @@ import { applyPatch } from "diff";
 import { z } from "zod";
 import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
+import { getLinkedAccounts } from "../../lib/accounts";
 
 export const runtime = "nodejs";
 
