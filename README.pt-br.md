@@ -117,6 +117,9 @@ duas vezes ou gerenciar conexões separadas:
   servidor persiste, e sempre fica guardado criptografado (AES-256-GCM) —
   nunca em texto puro.
 
+Política de segurança completa, modelo de ameaça e como reportar uma
+vulnerabilidade: [`SECURITY.pt-br.md`](./SECURITY.pt-br.md).
+
 ## Decisões de arquitetura
 
 Decisões de design relevantes ficam registradas como ADRs em
@@ -124,3 +127,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 
 - [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
+
+## Licença
+
+[MIT](./LICENSE)
