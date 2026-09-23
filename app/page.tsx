@@ -1,5 +1,6 @@
 const REPO_URL = "https://github.com/fabious054/github-mcp";
 const MCP_ENDPOINT = "https://github-mcp-seven.vercel.app/mcp";
+const SITE_URL = "https://github-mcp-seven.vercel.app";
 
 const FEATURES = [
   {
@@ -34,9 +35,31 @@ const FEATURES = [
   },
 ];
 
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "GitHub MCP",
+  description:
+    "An MCP server that gives Claude real GitHub access: branches, commits, pull requests, issues, and code search — authorized with your own GitHub login, never a shared token.",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Any (remote MCP server)",
+  url: SITE_URL,
+  license: `${REPO_URL}/blob/main/LICENSE`,
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+};
+
 export default function Home() {
   return (
     <main>
+      <script
+        type="application/ld+json"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <div className="wrap">
         <nav className="nav">
           <a className="brand" href="/">
