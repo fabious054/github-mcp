@@ -18,10 +18,10 @@ type GithubTokenResponse = {
   error_description?: string;
 };
 
-// O GitHub redireciona o usuário pra cá depois que ele autoriza (ou nega) o
-// acesso. Trocamos o code pelo token de acesso de verdade, guardamos esse
-// token dentro de um "authorization code" nosso (criptografado) e devolvemos
-// o navegador pro redirect_uri original do Claude.
+// GitHub redirects the user here after they authorize (or deny) access. We
+// exchange the code for the real access token, stash that token inside our
+// own (encrypted) "authorization code", and send the browser back to the
+// Claude's original redirect_uri.
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
@@ -32,30 +32,30 @@ export async function GET(req: Request) {
   const githubError = url.searchParams.get("error");
 
   if (!state) {
-    return oauthErrorResponse(400, "invalid_request", "state ausente na volta do GitHub.");
+    return oauthErrorResponse(400, "invalid_request", "Missing state on the way back from GitHub.");
   }
 
   let asState: AsState;
   try {
     asState = decryptJson<AsState>(state);
   } catch {
-    return oauthErrorResponse(400, "invalid_request", "state inválido ou expirado.");
+    return oauthErrorResponse(400, "invalid_request", "Invalid or expired state.");
   }
 
   if (!isFresh(asState.iat, 10 * 60)) {
-    return oauthErrorResponse(400, "invalid_request", "Fluxo de autorização expirou, tente conectar de novo.");
+    return oauthErrorResponse(400, "invalid_request", "Authorization flow expired, try connecting again.");
   }
 
   if (githubError) {
     const deny = new URL(asState.mcpRedirectUri);
     deny.searchParams.set("error", "access_denied");
-    deny.searchParams.set("error_description", "Autorização negada no GitHub.");
+    deny.searchParams.set("error_description", "Authorization denied on GitHub.");
     if (asState.mcpState) deny.searchParams.set("state", asState.mcpState);
     return Response.redirect(deny.toString(), 302);
   }
 
   if (!code) {
-    return oauthErrorResponse(400, "invalid_request", "code ausente na volta do GitHub.");
+    return oauthErrorResponse(400, "invalid_request", "Missing code on the way back from GitHub.");
   }
 
   const origin = new URL(req.url).origin;
@@ -75,7 +75,7 @@ export async function GET(req: Request) {
     return oauthErrorResponse(
       502,
       "server_error",
-      `Falha ao trocar o code com o GitHub: ${tokenBody.error_description || tokenBody.error || tokenRes.status}`
+      `Failed to exchange the code with GitHub: ${tokenBody.error_description || tokenBody.error || tokenRes.status}`
     );
   }
 
@@ -89,7 +89,7 @@ export async function GET(req: Request) {
       githubLogin = user.login;
     }
   } catch {
-    // não crítico — segue sem o login em cache
+    // not critical — continue without the cached login
   }
 
   const mcpCode = encryptJson({

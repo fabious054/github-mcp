@@ -1,178 +1,124 @@
 # GitHub MCP
 
-MCP server que dá ao Claude acesso real ao GitHub: criar branch, commitar,
-abrir/comentar PRs, listar/criar/comentar issues, ler arquivos e buscar código.
+*[Leia em português](./README.pt-br.md)*
 
-Suporta dois jeitos de conectar contas:
+An MCP server that gives Claude real access to GitHub: create branches, commit,
+open/comment on PRs, list/create/comment on issues, read files, and search
+code.
 
-- **OAuth (recomendado)** — qualquer pessoa que adicionar este connector no
-  Claude faz login com a própria conta do GitHub, na hora, sem precisar gerar
-  token manualmente. Cada um usa a própria conta, dinamicamente — é o modo
-  "multi-usuário" de verdade.
-- **Conta(s) fixa(s) via variável de ambiente (legado)** — mais simples de
-  configurar, mas o(s) token(s) ficam fixos na Vercel e só quem você
-  configurou tem acesso.
+## Connect to this instance
 
-O mesmo deploy funciona nos dois modos — qual vale depende só de quais
-variáveis de ambiente você define (ver abaixo). Se `GITHUB_OAUTH_CLIENT_ID`
-estiver definido, o OAuth tem prioridade.
+There's already a running instance of this server — you don't need to set up
+or deploy anything to use it.
 
-## Ferramentas disponíveis
+1. In Claude, add a **custom connector (remote MCP)** pointing to:
+   ```
+   https://github-mcp-seven.vercel.app/mcp
+   ```
+2. Claude opens a real GitHub "Authorize" screen. Log in with your own
+   GitHub account — no manual token to generate, nothing to configure.
+3. That's it. Every tool call runs with your own GitHub access — never a
+   shared account.
 
-- `create_branch` — cria uma branch a partir de outra
-- `commit_file` — cria/atualiza um arquivo com uma mensagem de commit (conteúdo inteiro, um arquivo por chamada)
-- `patch_file` — aplica um diff unificado a um arquivo existente numa branch, sem reenviar o conteúdo inteiro
-- `get_branch_head` — lê o SHA completo (40 caracteres) do commit que uma branch aponta
-- `open_pr` — abre um Pull Request
-- `list_prs` — lista PRs
-- `comment_pr` — comenta num PR
-- `list_issues` — lista issues (tarefas do board)
-- `create_issue` — cria uma issue
-- `comment_issue` — comenta numa issue (ex: relatório final de QA)
-- `read_file` — lê o conteúdo de um arquivo
-- `search_code` — busca código no repositório
-- `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
+Want to use more than one GitHub account from the same connector (e.g. a
+personal account and an organization account)? Call the `link_account` tool
+— it walks you through linking additional accounts, and the server then
+figures out on its own which linked account to use for each repository you
+target. See [Available tools](#available-tools) below.
 
-### Editando um trecho pequeno de um arquivo grande
+> Building or maintaining this server, or want to run your own separate
+> instance of it? See [`docs/self-hosting.md`](./docs/self-hosting.md) for
+> creating your own GitHub OAuth App, environment variables, and deploying
+> on Vercel.
 
-`commit_file` sempre exige o conteúdo inteiro do arquivo, mesmo quando só uma
-linha mudou. `patch_file` resolve isso pro caso de um arquivo só: recebe um
-diff unificado (formato `diff -u` ou `git diff`), busca o conteúdo atual do
-arquivo na branch, aplica o patch e commita o resultado — sem nunca precisar
-do conteúdo completo do arquivo na chamada.
+## Available tools
 
-### Git Data API — commits grandes ou multi-arquivo
+- `create_branch` — creates a branch from another one
+- `commit_file` — creates/updates a file with a commit message (full content, one file per call)
+- `patch_file` — applies a unified diff to an existing file on a branch, without resending the whole content
+- `get_branch_head` — reads the full (40-character) SHA of the commit a branch points to
+- `open_pr` — opens a Pull Request
+- `list_prs` — lists PRs
+- `comment_pr` — comments on a PR
+- `list_issues` — lists issues (board tasks)
+- `create_issue` — creates an issue
+- `comment_issue` — comments on an issue (e.g. final QA report)
+- `read_file` — reads a file's content
+- `search_code` — searches code in the repository
+- `whoami` — shows which identity/account is being used in the current session
+- `link_account` — links an ADDITIONAL GitHub account to your session
+- `list_accounts` — lists the accounts linked to your session
+- `list_repos_by_account` — lists the repositories a specific linked account can access
 
-Pra mudanças espalhadas por muitos arquivos (não só um), estas ferramentas
-expõem o modelo de dados do Git diretamente (blob → tree → commit → ref),
-permitindo reaproveitar um blob já existente por SHA (arquivo que não mudou
-entre commits nunca precisa ser reenviado) e agrupar vários arquivos num
-único commit atômico. Cada entrada de arquivo também aceita `patch` — o
-mesmo mecanismo de diff unificado do `patch_file`, mas dentro de um commit
-multi-arquivo:
+### Editing a small chunk of a large file
 
-- `create_blob` — cria um blob (conteúdo bruto) e devolve o SHA
-- `get_tree` — lê uma tree (lista arquivos e SHAs de blob de um commit/branch), útil pra descobrir o SHA de um blob já existente e reaproveitá-lo
-- `get_branch_head` — lê o SHA completo do commit atual de uma branch, necessário como `parents` de `create_commit` (o GitHub exige o SHA completo, não o abreviado que `commit_file`/`patch_file`/`commit_tree` imprimem na resposta)
-- `create_tree` — monta uma nova tree a partir de uma tree base, aplicando entradas que trazem `content` (blob novo), `patch` (diff unificado sobre o conteúdo atual do caminho na tree base) ou `sha` (blob reaproveitado, ou `null` pra remover o caminho)
-- `create_commit` — cria um commit a partir de uma tree e commit(s)-pai (`parents` exige SHA completo — use `get_branch_head` pra obtê-lo)
-- `update_ref` — aponta uma branch pra um commit específico (não é fast-forward por padrão, a menos que `force: true`)
-- `commit_tree` — **ferramenta de conveniência**: orquestra blob → tree → commit → update_ref numa chamada só, recebendo `branch`, `message` e uma lista de `files` (cada um com `content`, `patch` ou `sha`). É o substituto direto de "várias chamadas de `commit_file`, cada uma com o conteúdo inteiro" quando a mudança toca vários arquivos, edita só um trecho de algum deles, ou pode reaproveitar algum já existente.
+`commit_file` always requires the file's full content, even when only one
+line changed. `patch_file` solves that for the single-file case: it takes a
+unified diff (`diff -u` or `git diff` format), fetches the file's current
+content on the branch, applies the patch, and commits the result — never
+needing the file's full content in the call.
 
-`commit_file`, `patch_file` e `commit_tree` agora imprimem o SHA completo do
-commit na resposta (além do abreviado) — útil pra encadear com `create_commit`
-sem precisar de uma chamada extra a `get_branch_head`.
+### Git Data API — large or multi-file commits
 
-Todas essas operações são stateless — cada uma é uma chamada isolada à API do
-GitHub, sem precisar guardar nada entre invocações, o que combina bem com o
-deploy serverless na Vercel. `patch_file` e o suporte a `patch` usam a
-biblioteca [`diff`](https://www.npmjs.com/package/diff) (parsing e aplicação
-de diff unificado em JS puro, sem dependências nativas).
+For changes spread across many files (not just one), these tools expose the
+Git data model directly (blob → tree → commit → ref), letting you reuse an
+already-existing blob by SHA (a file that hasn't changed between commits
+never needs to be resent) and group several files into a single atomic
+commit. Each file entry also accepts `patch` — the same unified-diff
+mechanism as `patch_file`, but inside a multi-file commit:
 
-Todas aceitam `owner`/`repo` opcionais. No modo OAuth, se você não informar
-`owner`, o servidor tenta usar o seu próprio usuário do GitHub como padrão
-(mas o `repo` ainda precisa ser informado, a menos que `DEFAULT_REPO` esteja
-configurado). No modo legado, `account`/`owner`/`repo` seguem as regras de
-`DEFAULT_ACCOUNT`/`DEFAULT_OWNER`/`DEFAULT_REPO` descritas abaixo.
+- `create_blob` — creates a blob (raw content) and returns its SHA
+- `get_tree` — reads a tree (lists files and blob SHAs of a commit/branch), useful for finding an already-existing blob's SHA and reusing it
+- `get_branch_head` — reads a branch's current full commit SHA, required as `parents` for `create_commit` (GitHub requires the full SHA, not the abbreviated one `commit_file`/`patch_file`/`commit_tree` print in their response)
+- `create_tree` — builds a new tree from a base tree, applying entries that bring `content` (new blob), `patch` (unified diff over the path's current content in the base tree), or `sha` (reused blob, or `null` to remove the path)
+- `create_commit` — creates a commit from a tree and parent commit(s) (`parents` requires the full SHA — use `get_branch_head` to get it)
+- `update_ref` — points a branch to a specific commit (not a fast-forward by default, unless `force: true`)
+- `commit_tree` — **convenience tool**: orchestrates blob → tree → commit → update_ref in a single call, taking `branch`, `message` and a list of `files` (each with `content`, `patch` or `sha`). It's the direct replacement for "several `commit_file` calls, each with the full content" when the change touches several files, edits only part of some of them, or can reuse an existing one.
 
-## Modo OAuth — como funciona
+`commit_file`, `patch_file` and `commit_tree` print the commit's full SHA in
+their response (in addition to the abbreviated one) — useful for chaining
+with `create_commit` without an extra call to `get_branch_head`.
 
-1. Você cria **um** GitHub OAuth App (github.com → Settings → Developer
-   settings → OAuth Apps → New OAuth App), com:
-   - Homepage URL: a URL do seu projeto na Vercel.
-   - Authorization callback URL: `https://<seu-projeto>.vercel.app/callback`
-     (tem que ser essa exata — é fixa, então some depois de saber a URL final
-     da Vercel).
-2. Na Vercel, configure `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`
-   e `OAUTH_ENCRYPTION_KEY` (gerada com `openssl rand -base64 32`).
-3. Cada pessoa que adiciona este MCP como custom connector no Claude é levada
-   pra uma tela real de "Autorizar `<seu OAuth App>`" no GitHub. Ao aprovar,
-   o Claude passa a chamar as ferramentas usando o token dessa pessoa — nunca
-   um token compartilhado.
-4. `whoami` confirma, a qualquer momento, qual conta está autenticada na
-   sessão.
+All tools accept an optional `owner`/`repo`. If you don't provide `owner`,
+the server tries to use your own GitHub user as the default (but `repo`
+still needs to be given).
 
-Se o repositório-alvo pertence a uma organização (ex: `robozz-br`), a
-organização pode exigir aprovar o OAuth App explicitamente pra acesso a repos
-privados dela (Settings da organização → Third-party access).
+## Linking multiple accounts to the same session
 
-### Como o OAuth é implementado (sem banco de dados)
+A single person can link more than one GitHub account to the same
+connector, through successive logins — no need to add the connector twice
+or juggle separate connections:
 
-Este servidor roda em funções sem estado na Vercel, então em vez de guardar
-sessões/códigos num banco, tudo o que o fluxo de OAuth precisa lembrar viaja
-**criptografado (AES-256-GCM)** dentro dos próprios parâmetros — o `client_id`
-devolvido em `/register`, o `state` usado com o GitHub, e o `code` trocado em
-`/token`. Só quem tem a `OAUTH_ENCRYPTION_KEY` consegue gerar ou ler esses
-blobs.
+1. Call the `link_account` tool. It returns a one-time authorization link
+   (valid for 10 minutes).
+2. Open that link in a browser and authorize with the **different** GitHub
+   account you want to add. The primary account you're already connected
+   with never changes.
+3. From then on, every repo-scoped tool picks the right account
+   automatically: if only your primary account is linked, nothing changes;
+   if more than one account is linked, the server checks which one(s) have
+   access to the target repository and uses the match automatically, or
+   asks you to repeat the call with an explicit `account` when more than
+   one matches.
+4. `list_accounts` lists every account linked to your session, and
+   `list_repos_by_account` lists what a specific one can access — handy to
+   check before a call, or to figure out which `account` to pass when the
+   ambiguity error above happens.
 
-Limitação conhecida: como não há banco, um `code` de autorização não é
-invalidado após o primeiro uso — ele simplesmente expira sozinho (2 minutos).
-Isso é aceitável pra este caso de uso (o código só existe dentro de um
-redirect HTTPS entre o GitHub e o Claude), mas é uma diferença em relação a
-um Authorization Server "completo" com armazenamento — vale saber.
+## Security
 
-O token que o Claude recebe **é o próprio token de acesso do GitHub** da
-pessoa — o servidor nunca guarda nem loga esse token, só repassa.
+- No token is ever committed to this repository.
+- The server never stores your primary account's token — it's forwarded
+  from GitHub to Claude on each exchange, and revalidated against the
+  GitHub API on every tool call.
+- `whoami` never returns tokens, only identifies the account/session.
+- A linked (non-primary) account's token is the only thing this server
+  persists at all, and it's always stored encrypted (AES-256-GCM) — never
+  in plaintext.
 
-## Modo legado (sem OAuth) — conta única ou múltiplas contas fixas
+## Architecture decisions
 
-Se `GITHUB_OAUTH_CLIENT_ID` não estiver definido, o servidor cai automaticamente
-nesse modo:
+Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 
-- **Uma conta**: defina `GITHUB_TOKEN` (+ `DEFAULT_OWNER`/`DEFAULT_REPO`
-  opcionais).
-- **Várias contas pré-configuradas**: defina `GITHUB_ACCOUNTS` (JSON, mapa de
-  nome da conta → `{token, defaultOwner, defaultRepo, owners}`) e,
-  opcionalmente, `DEFAULT_ACCOUNT`. Use o parâmetro `account` nas ferramentas
-  pra escolher qual usar, ou deixe o servidor inferir pelo `owner`.
-
-Esse modo é mais simples mas não é dinâmico: só quem você configurou
-manualmente tem acesso, e trocar de conta exige editar a variável de
-ambiente.
-
-## Deploy na Vercel
-
-1. Suba este projeto para um repositório no GitHub.
-2. Na Vercel, importe o repositório como um novo projeto e faça o primeiro
-   deploy (pra descobrir a URL final).
-3. Se for usar OAuth: crie o GitHub OAuth App apontando o callback pra
-   `https://<url-da-vercel>/callback`, depois configure as variáveis
-   (`GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`,
-   `OAUTH_ENCRYPTION_KEY`) e faça um redeploy.
-4. Se for usar o modo legado: configure `GITHUB_TOKEN` (ou `GITHUB_ACCOUNTS`)
-   e faça um redeploy.
-5. A URL do MCP é: `https://<seu-projeto>.vercel.app/mcp`
-
-## Conectar no Claude
-
-No Claude, adicione um **custom connector (MCP remoto)** apontando para
-`https://<seu-projeto>.vercel.app/mcp`.
-
-- No modo OAuth, o Claude detecta automaticamente que o servidor exige
-  autenticação e abre a tela de login do GitHub pra cada pessoa que conectar.
-- No modo legado, não é pedida nenhuma autenticação do lado do Claude — o
-  token já está fixo na Vercel.
-
-## Desenvolvimento local
-
-```bash
-npm install
-cp .env.example .env.local   # preencha as variáveis do modo que for usar
-npm run dev
-```
-
-O servidor MCP local sobe em `http://localhost:3000/mcp`.
-
-## Segurança
-
-- Nenhum token é commitado — tokens (fixos ou os do OAuth) ficam só em
-  variáveis de ambiente / passam pelo servidor sem serem persistidos.
-- No modo OAuth, o servidor nunca guarda o token de ninguém — ele é
-  repassado do GitHub pro Claude a cada troca, e revalidado contra a API do
-  GitHub a cada chamada de ferramenta.
-- `whoami` nunca retorna tokens, só identifica a conta/sessão.
-- No modo legado, recomenda-se usar tokens com escopo restrito
-  (fine-grained, só nos repos que este MCP deve tocar).
-- No modo legado, este servidor não tem autenticação própria — qualquer
-  pessoa com a URL consegue chamá-lo, com acesso a todas as contas
-  configuradas. Use o modo OAuth se isso for uma preocupação.
+- [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
+- [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)

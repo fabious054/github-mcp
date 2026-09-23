@@ -7,11 +7,11 @@ type LinkState = {
   iat: number;
 };
 
-// Ponto de entrada humano (aberto num navegador, não pelo fluxo OAuth do
-// cliente MCP) devolvido pela ferramenta 'link_account'. Valida o 'state'
-// assinado que a ferramenta gerou (prova que foi pedido por uma chamada já
-// autenticada com a conta primária) e manda o navegador pra tela real de
-// autorização do GitHub, pra vincular uma conta ADICIONAL.
+// Human entry point (opened in a browser, not driven by the MCP client's
+// OAuth flow) returned by the 'link_account' tool. Validates the signed
+// 'state' the tool generated (proof it was requested by a call already
+// authenticated with the primary account) and sends the browser to GitHub's
+// real authorization screen, to link an ADDITIONAL account.
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const state = url.searchParams.get("state");
   if (!state) {
-    return oauthErrorResponse(400, "invalid_request", "state ausente.");
+    return oauthErrorResponse(400, "invalid_request", "Missing state.");
   }
 
   let linkState: LinkState;
@@ -29,7 +29,7 @@ export async function GET(req: Request) {
     return oauthErrorResponse(
       400,
       "invalid_request",
-      "Link inválido ou expirado — gere um novo com a ferramenta link_account."
+      "Invalid or expired link — generate a new one with the link_account tool."
     );
   }
 
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
     return oauthErrorResponse(
       400,
       "invalid_request",
-      "Link expirado (validade de 10 minutos) — gere um novo com a ferramenta link_account."
+      "Link expired (valid for 10 minutes) — generate a new one with the link_account tool."
     );
   }
 

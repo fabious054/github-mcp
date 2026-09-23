@@ -2,9 +2,10 @@ import { encryptJson, jsonResponse, oauthErrorResponse, requireOAuthEnabled, now
 
 export const runtime = "nodejs";
 
-// Dynamic Client Registration (RFC 7591) — stateless: em vez de guardar o
-// registro num banco, o client_id É o registro, criptografado. /authorize
-// depois só decripta o client_id recebido pra saber os redirect_uris válidos.
+// Dynamic Client Registration (RFC 7591) — stateless: instead of storing the
+// registration in a database, the client_id IS the registration, encrypted.
+// /authorize then just decrypts the received client_id to know the valid
+// redirect_uris.
 export async function POST(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
@@ -13,12 +14,12 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return oauthErrorResponse(400, "invalid_client_metadata", "Corpo da requisição precisa ser JSON.");
+    return oauthErrorResponse(400, "invalid_client_metadata", "Request body must be JSON.");
   }
 
   const redirectUris = body?.redirect_uris;
   if (!Array.isArray(redirectUris) || redirectUris.length === 0 || !redirectUris.every((u) => typeof u === "string")) {
-    return oauthErrorResponse(400, "invalid_client_metadata", "'redirect_uris' é obrigatório e precisa ser uma lista de URLs.");
+    return oauthErrorResponse(400, "invalid_client_metadata", "'redirect_uris' is required and must be a list of URLs.");
   }
 
   const clientName = typeof body?.client_name === "string" ? body.client_name : undefined;

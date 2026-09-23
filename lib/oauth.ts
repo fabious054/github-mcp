@@ -1,14 +1,14 @@
 import crypto from "node:crypto";
 
 // ---------------------------------------------------------------------------
-// Utilitários genéricos para o proxy de OAuth (GitHub <-> MCP).
+// Generic utilities for the OAuth proxy (GitHub <-> MCP).
 //
-// O servidor não tem banco de dados: em vez de guardar client registrations,
-// authorization codes e o "state" do fluxo num storage, tudo isso é
-// serializado como um blob assinado e criptografado (AES-256-GCM) que viaja
-// dentro do próprio parâmetro OAuth (client_id, state, code). Só quem tem a
-// OAUTH_ENCRYPTION_KEY (guardada na Vercel) consegue gerar ou ler esses blobs,
-// e cada um carrega o timestamp de emissão para expirar sozinho.
+// The server has no database: instead of storing client registrations,
+// authorization codes and the flow's "state" in a store, all of it is
+// serialized as a signed, encrypted blob (AES-256-GCM) that travels inside
+// the OAuth parameter itself (client_id, state, code). Only whoever holds
+// OAUTH_ENCRYPTION_KEY (kept on Vercel) can generate or read these blobs,
+// and each one carries its issued-at timestamp so it expires on its own.
 // ---------------------------------------------------------------------------
 
 const ALG = "aes-256-gcm";
@@ -17,13 +17,13 @@ function getKey(): Buffer {
   const secret = process.env.OAUTH_ENCRYPTION_KEY;
   if (!secret) {
     throw new Error(
-      "OAUTH_ENCRYPTION_KEY não configurado. Gere uma com `openssl rand -base64 32` e defina na Vercel."
+      "OAUTH_ENCRYPTION_KEY is not set. Generate one with `openssl rand -base64 32` and set it on Vercel."
     );
   }
   const key = Buffer.from(secret, "base64");
   if (key.length !== 32) {
     throw new Error(
-      "OAUTH_ENCRYPTION_KEY precisa decodificar para 32 bytes em base64 (gere com: openssl rand -base64 32)."
+      "OAUTH_ENCRYPTION_KEY must decode to 32 bytes in base64 (generate with: openssl rand -base64 32)."
     );
   }
   return key;
@@ -42,7 +42,7 @@ export function encryptJson(payload: unknown): string {
 export function decryptJson<T>(blob: string): T {
   const key = getKey();
   const raw = Buffer.from(blob, "base64url");
-  if (raw.length < 28) throw new Error("Blob inválido.");
+  if (raw.length < 28) throw new Error("Invalid blob.");
   const iv = raw.subarray(0, 12);
   const tag = raw.subarray(12, 28);
   const encrypted = raw.subarray(28);
@@ -65,8 +65,8 @@ export function sha256Base64Url(input: string): string {
   return crypto.createHash("sha256").update(input).digest("base64url");
 }
 
-// CORS: /register e /token são chamados via fetch pelo cliente MCP (rodando
-// no navegador, no caso do claude.ai), então precisam liberar CORS.
+// CORS: /register and /token are called via fetch by the MCP client
+// (running in the browser, in claude.ai's case), so they need to allow CORS.
 export function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
@@ -112,7 +112,7 @@ export function requireOAuthEnabled(): Response | undefined {
     return oauthErrorResponse(
       500,
       "server_error",
-      "OAuth não está configurado neste servidor (faltam GITHUB_OAUTH_CLIENT_ID/GITHUB_OAUTH_CLIENT_SECRET)."
+      "OAuth is not configured on this server (missing GITHUB_OAUTH_CLIENT_ID/GITHUB_OAUTH_CLIENT_SECRET)."
     );
   }
   return undefined;

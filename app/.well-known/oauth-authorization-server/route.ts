@@ -2,9 +2,9 @@ import { getPublicOrigin, metadataCorsOptionsRequestHandler } from "mcp-handler"
 
 export const runtime = "nodejs";
 
-// Metadata do "Authorization Server" (RFC 8414). O cliente MCP (Claude) lê
-// isto pra descobrir os endpoints de /authorize, /token e /register deste
-// servidor, que por baixo dos panos fazem proxy pro OAuth do GitHub.
+// "Authorization Server" metadata (RFC 8414). The MCP client (Claude) reads
+// this to discover this server's /authorize, /token and /register
+// endpoints, which under the hood proxy GitHub's OAuth.
 export async function GET(req: Request) {
   const origin = getPublicOrigin(req);
   const scopes = (process.env.GITHUB_OAUTH_SCOPES || "repo read:org").split(" ");

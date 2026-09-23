@@ -16,10 +16,10 @@ type RegisteredClient = {
   iat: number;
 };
 
-// O Claude (cliente MCP) traz o usuário até aqui no navegador. A gente
-// valida o pedido, empacota tudo que precisa lembrar (client, redirect_uri,
-// code_challenge, state) dentro de um "state" próprio, e manda o navegador
-// pra tela de autorização de verdade do GitHub.
+// The Claude (MCP client) brings the user here in the browser. We validate
+// the request, pack everything we need to remember (client, redirect_uri,
+// code_challenge, state) into our own "state", and send the browser to
+// GitHub's real authorization screen.
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
@@ -35,26 +35,26 @@ export async function GET(req: Request) {
   const codeChallengeMethod = params.get("code_challenge_method");
 
   if (!clientId) {
-    return oauthErrorResponse(400, "invalid_request", "client_id ausente.");
+    return oauthErrorResponse(400, "invalid_request", "Missing client_id.");
   }
 
   let client: RegisteredClient;
   try {
     client = decryptJson<RegisteredClient>(clientId);
   } catch {
-    return oauthErrorResponse(400, "invalid_client", "client_id inválido ou expirado — refaça o registro do cliente.");
+    return oauthErrorResponse(400, "invalid_client", "Invalid or expired client_id — redo client registration.");
   }
 
   if (!redirectUri || !client.redirectUris.includes(redirectUri)) {
-    return oauthErrorResponse(400, "invalid_request", "redirect_uri ausente ou não corresponde ao registrado.");
+    return oauthErrorResponse(400, "invalid_request", "Missing redirect_uri, or it doesn't match the registered one.");
   }
 
   if (responseType !== "code") {
-    return redirectWithError(redirectUri, state, "unsupported_response_type", "Só 'code' é suportado.");
+    return redirectWithError(redirectUri, state, "unsupported_response_type", "Only 'code' is supported.");
   }
 
   if (!codeChallenge || codeChallengeMethod !== "S256") {
-    return redirectWithError(redirectUri, state, "invalid_request", "PKCE (code_challenge com S256) é obrigatório.");
+    return redirectWithError(redirectUri, state, "invalid_request", "PKCE (code_challenge with S256) is required.");
   }
 
   const githubClientId = process.env.GITHUB_OAUTH_CLIENT_ID!;

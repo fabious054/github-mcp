@@ -16,10 +16,10 @@ type GithubTokenResponse = {
   error_description?: string;
 };
 
-// GitHub redireciona pra cá depois que a pessoa autoriza (ou nega) o acesso
-// da conta ADICIONAL. Troca o code pelo token de verdade, descobre o login
-// dessa conta, e grava o vínculo (primaryLogin -> login adicional) no Mongo,
-// com o token criptografado — nunca em texto puro.
+// GitHub redirects here after the person authorizes (or denies) access for
+// the ADDITIONAL account. Exchanges the code for the real token, looks up
+// that account's login, and writes the link (primaryLogin -> additional
+// login) to MongoDB, with the token encrypted — never in plaintext.
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
@@ -30,30 +30,30 @@ export async function GET(req: Request) {
   const githubError = url.searchParams.get("error");
 
   if (!state) {
-    return oauthErrorResponse(400, "invalid_request", "state ausente na volta do GitHub.");
+    return oauthErrorResponse(400, "invalid_request", "Missing state on the way back from GitHub.");
   }
 
   let asState: AsState;
   try {
     asState = decryptJson<AsState>(state);
   } catch {
-    return oauthErrorResponse(400, "invalid_request", "state inválido ou expirado.");
+    return oauthErrorResponse(400, "invalid_request", "Invalid or expired state.");
   }
 
   if (!isFresh(asState.iat, 10 * 60)) {
     return oauthErrorResponse(
       400,
       "invalid_request",
-      "Fluxo de vínculo expirou, gere um novo link com a ferramenta link_account."
+      "The linking flow expired, generate a new link with the link_account tool."
     );
   }
 
   if (githubError) {
-    return htmlResponse("Autorização negada no GitHub. Nenhuma conta foi vinculada.");
+    return htmlResponse("Authorization denied on GitHub. No account was linked.");
   }
 
   if (!code) {
-    return oauthErrorResponse(400, "invalid_request", "code ausente na volta do GitHub.");
+    return oauthErrorResponse(400, "invalid_request", "Missing code on the way back from GitHub.");
   }
 
   const origin = new URL(req.url).origin;
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
     return oauthErrorResponse(
       502,
       "server_error",
-      `Falha ao trocar o code com o GitHub: ${tokenBody.error_description || tokenBody.error || tokenRes.status}`
+      `Failed to exchange the code with GitHub: ${tokenBody.error_description || tokenBody.error || tokenRes.status}`
     );
   }
 
@@ -81,24 +81,24 @@ export async function GET(req: Request) {
     headers: { Authorization: `Bearer ${tokenBody.access_token}`, "User-Agent": "github-mcp-oauth" },
   });
   if (!userRes.ok) {
-    return oauthErrorResponse(502, "server_error", "Não foi possível identificar a conta do GitHub recém-autorizada.");
+    return oauthErrorResponse(502, "server_error", "Could not identify the newly authorized GitHub account.");
   }
   const user = await userRes.json();
   const login: string | undefined = user.login;
   if (!login) {
-    return oauthErrorResponse(502, "server_error", "GitHub não devolveu um login válido.");
+    return oauthErrorResponse(502, "server_error", "GitHub did not return a valid login.");
   }
 
   if (login === asState.primaryLogin) {
     return htmlResponse(
-      `'${login}' já é a sua conta primária — nada a vincular. Pra adicionar uma conta, autorize com uma conta do GitHub diferente.`
+      `'${login}' is already your primary account — nothing to link. To add an account, authorize with a different GitHub account.`
     );
   }
 
   await linkAccount(asState.primaryLogin, login, tokenBody.access_token);
 
   return htmlResponse(
-    `Conta '${login}' vinculada com sucesso à sua conta primária ('${asState.primaryLogin}'). Pode fechar esta aba e voltar pro Claude.`
+    `Account '${login}' was successfully linked to your primary account ('${asState.primaryLogin}'). You can close this tab and go back to Claude.`
   );
 }
 

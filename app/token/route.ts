@@ -17,9 +17,9 @@ function sha256Base64Url(input: string): string {
   return crypto.createHash("sha256").update(input).digest("base64url");
 }
 
-// O Claude troca aqui o code recebido em /callback pelo access_token de
-// verdade. O "access_token" que devolvemos É o token do GitHub — este
-// servidor é só um proxy, nunca guarda os tokens em lugar nenhum.
+// This is where Claude exchanges the code it got from /callback for the
+// real access_token. The "access_token" we return IS the GitHub token —
+// this server is just a proxy, it never stores tokens anywhere.
 export async function POST(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
@@ -40,30 +40,30 @@ export async function POST(req: Request) {
   const codeVerifier = params.get("code_verifier");
 
   if (grantType !== "authorization_code") {
-    return oauthErrorResponse(400, "unsupported_grant_type", "Só 'authorization_code' é suportado.");
+    return oauthErrorResponse(400, "unsupported_grant_type", "Only 'authorization_code' is supported.");
   }
   if (!code) {
-    return oauthErrorResponse(400, "invalid_request", "code ausente.");
+    return oauthErrorResponse(400, "invalid_request", "Missing code.");
   }
 
   let authCode: McpAuthCode;
   try {
     authCode = decryptJson<McpAuthCode>(code);
   } catch {
-    return oauthErrorResponse(400, "invalid_grant", "code inválido ou já usado.");
+    return oauthErrorResponse(400, "invalid_grant", "Invalid or already-used code.");
   }
 
   if (!isFresh(authCode.iat, 2 * 60)) {
-    return oauthErrorResponse(400, "invalid_grant", "code expirado — refaça a autorização.");
+    return oauthErrorResponse(400, "invalid_grant", "Code expired — redo the authorization.");
   }
   if (clientId && clientId !== authCode.mcpClientId) {
-    return oauthErrorResponse(400, "invalid_grant", "client_id não corresponde ao code.");
+    return oauthErrorResponse(400, "invalid_grant", "client_id doesn't match the code.");
   }
   if (redirectUri && redirectUri !== authCode.mcpRedirectUri) {
-    return oauthErrorResponse(400, "invalid_grant", "redirect_uri não corresponde ao code.");
+    return oauthErrorResponse(400, "invalid_grant", "redirect_uri doesn't match the code.");
   }
   if (!codeVerifier || sha256Base64Url(codeVerifier) !== authCode.codeChallenge) {
-    return oauthErrorResponse(400, "invalid_grant", "code_verifier (PKCE) inválido.");
+    return oauthErrorResponse(400, "invalid_grant", "Invalid code_verifier (PKCE).");
   }
 
   return jsonResponse({

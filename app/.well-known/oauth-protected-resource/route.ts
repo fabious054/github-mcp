@@ -2,9 +2,9 @@ import { getPublicOrigin, protectedResourceHandler, metadataCorsOptionsRequestHa
 
 export const runtime = "nodejs";
 
-// Metadata RFC 9728: diz ao cliente MCP que este servidor (o /mcp) é
-// protegido, e qual Authorization Server usar (o próprio, ver
-// /.well-known/oauth-authorization-server) pra conseguir um token.
+// RFC 9728 metadata: tells the MCP client that this server (the /mcp
+// endpoint) is protected, and which Authorization Server to use (this same
+// server, see /.well-known/oauth-authorization-server) to get a token.
 export async function GET(req: Request) {
   const origin = getPublicOrigin(req);
   return protectedResourceHandler({ authServerUrls: [origin] })(req);

@@ -1,11 +1,11 @@
 import { MongoClient } from "mongodb";
 
-// Conexão com o MongoDB segura pra ambiente serverless: a Vercel pode rodar
-// muitas invocações concorrentes/sucessivas, e abrir uma conexão nova em
-// cada uma delas estoura rápido o limite de conexões do Atlas (principalmente
-// no tier free M0). O padrão recomendado é cachear o client (e a promise de
-// connect() em andamento) numa variável global, pra uma invocação "quente"
-// reaproveitar a mesma conexão em vez de abrir outra.
+// MongoDB connection, safe for a serverless environment: Vercel can run
+// many concurrent/successive invocations, and opening a new connection on
+// every single one quickly exhausts the Atlas connection limit (especially
+// on the free M0 tier). The recommended pattern is to cache the client
+// (and the in-flight connect() promise) in a global variable, so a "warm"
+// invocation reuses the same connection instead of opening a new one.
 
 declare global {
   // eslint-disable-next-line no-var
@@ -16,7 +16,7 @@ function getMongoUri(): string {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
     throw new Error(
-      "MONGODB_URI não configurado. Defina a connection string do MongoDB Atlas na Vercel."
+      "MONGODB_URI is not set. Define your MongoDB Atlas connection string on Vercel."
     );
   }
   return uri;
@@ -35,18 +35,18 @@ export async function getDb() {
   return client.db("github_mcp");
 }
 
-// Origem pública do servidor, usada pra montar URLs absolutas (o link que
-// 'link_account' devolve) a partir de dentro de uma chamada de ferramenta —
-// onde, diferente das rotas OAuth (/authorize, /callback), não temos a mão o
-// Request original pra derivar isso de headers. PUBLIC_ORIGIN é opcional e
-// tem prioridade; na ausência, cai pras variáveis que a própria Vercel
-// define automaticamente no deploy.
+// The server's public origin, used to build absolute URLs (the link
+// 'link_account' returns) from inside a tool call — where, unlike the OAuth
+// routes (/authorize, /callback), we don't have the original Request handy
+// to derive this from headers. PUBLIC_ORIGIN is optional and takes
+// priority; absent that, it falls back to the variables Vercel itself sets
+// automatically on deploy.
 export function getServerOrigin(): string {
   const explicit = process.env.PUBLIC_ORIGIN;
   if (explicit) return explicit.replace(/\/$/, "");
   const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
   if (vercelUrl) return `https://${vercelUrl}`;
   throw new Error(
-    "Não foi possível determinar a URL pública do servidor. Defina PUBLIC_ORIGIN na Vercel (ex: https://seu-projeto.vercel.app)."
+    "Could not determine the server's public URL. Set PUBLIC_ORIGIN on Vercel (e.g. https://your-project.vercel.app)."
   );
 }
