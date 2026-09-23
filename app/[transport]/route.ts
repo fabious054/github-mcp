@@ -922,7 +922,7 @@ const rawHandler = createMcpHandler(
     );
   },
   {},
-  { verboseLogs: true, maxDuration: 60 }
+  { verboseLogs: process.env.NODE_ENV !== "production", maxDuration: 60 }
 );
 
 async function verifyGithubToken(_req: Request, bearerToken?: string) {
