@@ -116,9 +116,16 @@ or juggle separate connections:
   persists at all, and it's always stored encrypted (AES-256-GCM) — never
   in plaintext.
 
+Full security policy, threat model, and how to report a vulnerability:
+[`SECURITY.md`](./SECURITY.md).
+
 ## Architecture decisions
 
 Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 
 - [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
+
+## License
+
+[MIT](./LICENSE)
