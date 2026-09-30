@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { decryptJson, isFresh, jsonResponse, oauthErrorResponse, requireOAuthEnabled } from "../../lib/oauth";
+import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,8 @@ function sha256Base64Url(input: string): string {
 export async function POST(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
+  const limited = await rateLimitOAuthRoute(req, "token", "strict");
+  if (limited) return limited;
 
   const contentType = req.headers.get("content-type") || "";
   let params: URLSearchParams;
