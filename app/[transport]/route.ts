@@ -5,6 +5,7 @@ import { z } from "zod";
 import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
 import { getLinkedAccounts } from "../../lib/accounts";
+import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 
 export const runtime = "nodejs";
 
@@ -925,12 +926,13 @@ const rawHandler = createMcpHandler(
   { verboseLogs: true, maxDuration: 60 }
 );
 
-async function verifyGithubToken(_req: Request, bearerToken?: string) {
+async function verifyGithubToken(req: Request, bearerToken?: string) {
   if (!bearerToken) return undefined;
   const res = await fetch("https://api.github.com/user", {
     headers: { Authorization: `Bearer ${bearerToken}`, "User-Agent": "github-mcp-oauth" },
   });
   if (!res.ok) {
+    await recordFailedTokenVerification(req);
     throw new Error("Invalid or expired GitHub token.");
   }
   const user = await res.json();
@@ -942,6 +944,14 @@ async function verifyGithubToken(_req: Request, bearerToken?: string) {
   };
 }
 
-const handler = oauthEnabled() ? withMcpAuth(rawHandler, verifyGithubToken, { required: true }) : rawHandler;
+const authedHandler = oauthEnabled() ? withMcpAuth(rawHandler, verifyGithubToken, { required: true }) : rawHandler;
+
+// Rate limit first: in OAuth mode this runs before the token is verified,
+// so requests over the limit never cost a GET /user call to GitHub.
+async function handler(req: Request) {
+  const limited = await rateLimitMcp(req, oauthEnabled());
+  if (limited) return limited;
+  return authedHandler(req);
+}
 
 export { handler as GET, handler as POST, handler as DELETE };
