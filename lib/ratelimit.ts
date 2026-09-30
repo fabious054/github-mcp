@@ -46,6 +46,14 @@ local mode = ARGV[1]
 local limit = tonumber(ARGV[2])
 local span = tonumber(ARGV[3])
 
+if mode == "peek" then
+  local n = tonumber(redis.call("GET", KEYS[1]) or "0")
+  if n >= limit then
+    return { 0, redis.call("PTTL", KEYS[1]) }
+  end
+  return { 1, 0 }
+end
+
 if mode == "window" then
   local n = redis.call("INCR", KEYS[1])
   if n == 1 then
@@ -138,7 +146,7 @@ function withTimeout<T>(promise: Promise<T>): Promise<T> {
 }
 
 async function run(
-  mode: "window" | "bucket",
+  mode: "window" | "bucket" | "peek",
   key: string,
   limit: number,
   spanMs: number
@@ -176,6 +184,16 @@ export function checkWindow(
   windowMs: number
 ): Promise<RateLimitResult> {
   return run("window", `w:${key}`, limit, windowMs);
+}
+
+// Reads a fixed-window counter without incrementing it: `allowed` is false
+// once the counter has reached `limit`. Uses the same counter as checkWindow.
+export function peekWindow(
+  key: string,
+  limit: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  return run("peek", `w:${key}`, limit, windowMs);
 }
 
 // Token bucket: bursts up to `capacity`, refilling a full bucket every
