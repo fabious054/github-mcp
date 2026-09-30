@@ -13,7 +13,7 @@ import { createClient } from "redis";
 //   Redis runs atomically, and the clock comes from Redis (TIME) so that
 //   different instances never disagree about "now".
 
-type RedisClient = ReturnType<typeof createClient>;
+type RedisClient = ReturnType<typeof makeClient>;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -86,21 +86,25 @@ redis.call("PEXPIRE", KEYS[1], span)
 return { allowed, retry }
 `;
 
+function makeClient(url: string) {
+  return createClient({
+    url,
+    socket: {
+      connectTimeout: TIMEOUT_MS,
+      // Never retry in the background: in a serverless function a retry
+      // loop would only keep the invocation alive. A failed connection is
+      // dropped below and re-attempted by the next request.
+      reconnectStrategy: false,
+    },
+  });
+}
+
 function getRedisClientPromise(): Promise<RedisClient> | null {
   const url = process.env.REDIS_URL;
   if (!url) return null;
 
   if (!global._redisClientPromise) {
-    const client = createClient({
-      url,
-      socket: {
-        connectTimeout: TIMEOUT_MS,
-        // Never retry in the background: in a serverless function a retry
-        // loop would only keep the invocation alive. A failed connection is
-        // dropped below and re-attempted by the next request.
-        reconnectStrategy: false,
-      },
-    });
+    const client = makeClient(url);
     // Without an 'error' listener node-redis would throw on socket errors.
     client.on("error", (err) => {
       console.error("[ratelimit] redis client error:", err);
