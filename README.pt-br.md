@@ -106,6 +106,24 @@ duas vezes ou gerenciar conexões separadas:
    pra conferir antes de uma chamada, ou pra descobrir qual `account`
    informar quando o erro de ambiguidade acima acontecer.
 
+## Limite de requisições
+
+Todo endpoint público tem limite de requisições (baseado em Redis, veja o
+[ADR 0003](./docs/adr/0003-redis-rate-limiting.md)). Ao passar do limite, o
+servidor responde `429 Too Many Requests` com o header `Retry-After`.
+
+| Endpoint | Limite | Chave |
+|---|---|---|
+| `/register`, `/token`, `/authorize` | 20 requisições / 5 min | IP do cliente |
+| `/link-account`, `/link-callback`, `/callback` | 30 requisições / 5 min | IP do cliente |
+| `/mcp` (modo OAuth) | 60 requisições / min (rajadas permitidas) | hash do bearer token |
+| `/mcp` (modo legado) | 60 requisições / min (rajadas permitidas) | IP do cliente |
+| `/mcp`, tokens inválidos | 20 verificações falhas / 5 min | IP do cliente |
+
+O uso normal fica bem abaixo desses limites. Se o Redis estiver fora do ar,
+as requisições passam (fail-open), então uma queda nunca bloqueia o login
+nem as chamadas de ferramenta.
+
 ## Segurança
 
 - Nenhum token é commitado neste repositório.
@@ -127,6 +145,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 
 - [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
+- [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
 
 ## Licença
 
