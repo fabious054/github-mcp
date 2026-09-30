@@ -1,4 +1,5 @@
 import { encryptJson, jsonResponse, oauthErrorResponse, requireOAuthEnabled, nowSeconds } from "../../lib/oauth";
+import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
 
 export const runtime = "nodejs";
 
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
+  const limited = await rateLimitOAuthRoute(req, "register", "strict");
+  if (limited) return limited;
 
   let body: any;
   try {
