@@ -7,6 +7,7 @@ import {
   requireOAuthEnabled,
 } from "../../lib/oauth";
 import { getPublicOrigin } from "mcp-handler";
+import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,8 @@ type RegisteredClient = {
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
+  const limited = await rateLimitOAuthRoute(req, "authorize", "strict");
+  if (limited) return limited;
 
   const url = new URL(req.url);
   const params = url.searchParams;
