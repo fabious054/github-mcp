@@ -22,7 +22,11 @@ declare global {
 
 // Short on purpose: rate limiting must not add noticeable latency, and a
 // slow Redis is treated the same as an unreachable one (fail-open).
-const TIMEOUT_MS = 300;
+const COMMAND_TIMEOUT_MS = 300;
+// Opening the connection (TCP + TLS + auth) on a cold start takes longer
+// than a command; with the command timeout, the first request of every cold
+// instance would fail open. Only that first request pays this wait.
+const CONNECT_TIMEOUT_MS = 1000;
 const KEY_PREFIX = "rl:";
 
 export type RateLimitResult = {
@@ -90,7 +94,7 @@ function makeClient(url: string) {
   return createClient({
     url,
     socket: {
-      connectTimeout: TIMEOUT_MS,
+      connectTimeout: CONNECT_TIMEOUT_MS,
       // Never retry in the background: in a serverless function a retry
       // loop would only keep the invocation alive. A failed connection is
       // dropped below and re-attempted by the next request.
@@ -118,11 +122,11 @@ function getRedisClientPromise(): Promise<RedisClient> | null {
   return global._redisClientPromise;
 }
 
-function withTimeout<T>(promise: Promise<T>): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error(`redis timed out after ${TIMEOUT_MS}ms`)),
-      TIMEOUT_MS
+      () => reject(new Error(`redis timed out after ${ms}ms`)),
+      ms
     );
     promise.then(
       (v) => {
@@ -147,14 +151,13 @@ async function run(
   if (!clientPromise) return ALLOWED; // REDIS_URL unset: no-op.
 
   try {
+    const client = await withTimeout(clientPromise, CONNECT_TIMEOUT_MS);
     const reply = await withTimeout(
-      (async () => {
-        const client = await clientPromise;
-        return client.eval(SCRIPT, {
-          keys: [KEY_PREFIX + key],
-          arguments: [mode, String(limit), String(spanMs)],
-        });
-      })()
+      client.eval(SCRIPT, {
+        keys: [KEY_PREFIX + key],
+        arguments: [mode, String(limit), String(spanMs)],
+      }),
+      COMMAND_TIMEOUT_MS
     );
     const [allowed, retryMs] = reply as [number, number];
     if (Number(allowed) === 1) return ALLOWED;

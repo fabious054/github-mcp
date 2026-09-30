@@ -1,4 +1,5 @@
 import { decryptJson, encryptJson, isFresh, nowSeconds, oauthErrorResponse, requireOAuthEnabled } from "../../lib/oauth";
+import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,8 @@ type LinkState = {
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
+  const limited = await rateLimitOAuthRoute(req, "link-account", "relaxed");
+  if (limited) return limited;
 
   const url = new URL(req.url);
   const state = url.searchParams.get("state");

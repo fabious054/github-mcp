@@ -1,5 +1,6 @@
 import { decryptJson, isFresh, oauthErrorResponse, requireOAuthEnabled } from "../../lib/oauth";
 import { linkAccount } from "../../lib/accounts";
+import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,8 @@ type GithubTokenResponse = {
 export async function GET(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
+  const limited = await rateLimitOAuthRoute(req, "link-callback", "relaxed");
+  if (limited) return limited;
 
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
