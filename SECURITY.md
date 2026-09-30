@@ -18,6 +18,14 @@ before making the repository public, and how to report a vulnerability.
   encrypted (AES-256-GCM), never in plaintext. See
   [ADR 0002](./docs/adr/0002-multi-account-oauth-linking.md) for the design.
 - `whoami` never returns a token, only the identity/session in use.
+- Every public endpoint is rate limited with a Redis-backed limiter to
+  blunt abuse and brute-force attempts (see
+  [ADR 0003](./docs/adr/0003-redis-rate-limiting.md)). Limits are per IP on
+  the OAuth endpoints and per bearer token on `/mcp`; repeated invalid
+  tokens are throttled per IP. The limiter fails open: if Redis is down,
+  requests are allowed rather than blocking legitimate use, so it reduces
+  exposure but is not a substitute for a WAF. Redis holds only counters
+  keyed by IP or by a hash of the token — never a token itself.
 - Legacy mode (fixed `GITHUB_TOKEN`/`GITHUB_ACCOUNTS`, no OAuth) has no
   authentication of its own — anyone with the URL can call it, with access
   to every configured account. It exists for self-hosted, single-operator
@@ -51,5 +59,6 @@ seriously and addressed as a priority.
 Anyone running their own instance (see
 [`docs/self-hosting.md`](./docs/self-hosting.md)) is responsible for their
 own secrets: generate a fresh `OAUTH_ENCRYPTION_KEY` (never reuse one from
-another instance), keep `MONGODB_URI` out of version control, and register
-your own GitHub OAuth App rather than reusing anyone else's credentials.
+another instance), keep `MONGODB_URI` and `REDIS_URL` out of version
+control, and register your own GitHub OAuth App rather than reusing anyone
+else's credentials.

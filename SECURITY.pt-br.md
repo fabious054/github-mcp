@@ -20,6 +20,14 @@ vulnerabilidade.
   [ADR 0002](./docs/adr/0002-multi-account-oauth-linking.md) pro design
   completo.
 - `whoami` nunca retorna um token, só identifica a conta/sessão em uso.
+- Todo endpoint público tem limite de requisições, feito por um limitador
+  baseado em Redis, pra frear abuso e tentativas de força bruta (veja o
+  [ADR 0003](./docs/adr/0003-redis-rate-limiting.md)). Os limites são por
+  IP nos endpoints de OAuth e por bearer token no `/mcp`; tokens inválidos
+  repetidos são limitados por IP. O limitador é fail-open: se o Redis cair,
+  as requisições passam em vez de bloquear o uso legítimo, então ele reduz
+  a exposição mas não substitui um WAF. O Redis guarda só contadores com
+  chave por IP ou por hash do token — nunca um token em si.
 - O modo legado (`GITHUB_TOKEN`/`GITHUB_ACCOUNTS` fixos, sem OAuth) não tem
   autenticação própria — qualquer um com a URL consegue chamá-lo, com
   acesso a todas as contas configuradas. Ele existe pra quem for rodar a
@@ -56,5 +64,5 @@ Quem roda a própria instância (veja
 [`docs/self-hosting.pt-br.md`](./docs/self-hosting.pt-br.md)) é responsável
 pelos próprios segredos: gere uma `OAUTH_ENCRYPTION_KEY` nova (nunca
 reaproveite a de outra instância), mantenha `MONGODB_URI` fora do controle
-de versão, e registre seu próprio GitHub OAuth App em vez de reusar
-credenciais de outra pessoa.
+de versão (e o mesmo vale pra `REDIS_URL`), e registre seu próprio GitHub
+OAuth App em vez de reusar credenciais de outra pessoa.

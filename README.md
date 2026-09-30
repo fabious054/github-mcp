@@ -105,6 +105,23 @@ or juggle separate connections:
    check before a call, or to figure out which `account` to pass when the
    ambiguity error above happens.
 
+## Rate limiting
+
+Every public endpoint is rate limited (Redis-backed, see
+[ADR 0003](./docs/adr/0003-redis-rate-limiting.md)). Over the limit, the
+server answers `429 Too Many Requests` with a `Retry-After` header.
+
+| Endpoint | Limit | Keyed by |
+|---|---|---|
+| `/register`, `/token`, `/authorize` | 20 requests / 5 min | client IP |
+| `/link-account`, `/link-callback`, `/callback` | 30 requests / 5 min | client IP |
+| `/mcp` (OAuth mode) | 60 requests / min (bursts allowed) | hash of the bearer token |
+| `/mcp` (legacy mode) | 60 requests / min (bursts allowed) | client IP |
+| `/mcp`, invalid tokens | 20 failed verifications / 5 min | client IP |
+
+Normal use stays far below these limits. If Redis is unreachable, requests
+are allowed (fail-open) so an outage never blocks login or tool calls.
+
 ## Security
 
 - No token is ever committed to this repository.
@@ -125,6 +142,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 
 - [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
+- [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
 
 ## License
 

@@ -73,6 +73,26 @@ free M0 tier is enough). A linked account's token is stored encrypted
 (AES-256-GCM, reusing the same helpers as the base OAuth flow) — never in
 plaintext.
 
+### Rate limiting storage
+
+Every public endpoint is rate limited with counters kept in Redis, because
+each serverless invocation is isolated and needs a store shared across
+invocations (see [ADR 0003](./adr/0003-redis-rate-limiting.md)). It applies
+to both authentication modes.
+
+- **Setup:** set `REDIS_URL` to a standard Redis connection URL. On Vercel,
+  the easiest way is the Redis integration from the Marketplace, which sets
+  `REDIS_URL` for you. Use a dedicated store, separate from any other data.
+- **Requirement:** the server runs a small Lua script with `EVAL`, so the
+  Redis provider must support it (most do).
+- **Without it:** if `REDIS_URL` is unset (for example, local development),
+  rate limiting is disabled and nothing else changes.
+- **If Redis is down:** requests are allowed and the error is logged
+  (fail-open), so an outage never blocks login or tool calls. Connecting
+  waits up to 1 s; each command times out after 300 ms.
+- **Limits:** fixed in code for now — see the table in the main
+  [`README.md`](../README.md#rate-limiting).
+
 ## Legacy mode (no OAuth) — single or multiple fixed accounts
 
 If `GITHUB_OAUTH_CLIENT_ID` isn't set, the server automatically falls back
@@ -99,8 +119,8 @@ that's a concern.
 3. If using OAuth: create the GitHub OAuth App pointing the callback to
    `https://<your-vercel-url>/callback`, then set the variables
    (`GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`,
-   `OAUTH_ENCRYPTION_KEY`, and `MONGODB_URI` if you want multi-account
-   linking) and redeploy.
+   `OAUTH_ENCRYPTION_KEY`, `MONGODB_URI` if you want multi-account
+   linking, and `REDIS_URL` to enable rate limiting) and redeploy.
 4. If using legacy mode: set `GITHUB_TOKEN` (or `GITHUB_ACCOUNTS`) and
    redeploy.
 5. The MCP URL is: `https://<your-project>.vercel.app/mcp`
@@ -124,3 +144,4 @@ comments, grouped by mode.
 
 - [0001 — Git Data API for large commits](./adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./adr/0002-multi-account-oauth-linking.md)
+- [0003 — Redis-backed rate limiting](./adr/0003-redis-rate-limiting.md)

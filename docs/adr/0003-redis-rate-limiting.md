@@ -1,7 +1,7 @@
 # ADR 0003: Redis-backed rate limiting
 
 ## Status
-Accepted (2026-09-30)
+Accepted (2026-09-30). Implemented in #23, #24 and #25 (issue #21).
 
 ## Context
 
@@ -42,29 +42,67 @@ across invocations.
 ## Decision
 
 Use Redis, connected through `REDIS_URL` (Preview and Production). Apply
-rate limiting to all routes, with these limits as the starting point:
+rate limiting to all routes, with these limits:
 
-- `/register`, `/token`, `/authorize`: 20 requests / 5 min per IP
-- `/link-account`, `/link-callback`, `/callback`: 30 requests / 5 min per IP
-- `/mcp`, OAuth mode: 60 requests / min per identity, token bucket to allow
-  short bursts
-- `/mcp`, legacy fixed-account mode: same limit, per IP
-- Rejections return `429` with a `Retry-After` header.
+| Endpoint | Limit | Keyed by |
+|---|---|---|
+| `/register`, `/token`, `/authorize` | 20 requests / 5 min | client IP |
+| `/link-account`, `/link-callback`, `/callback` | 30 requests / 5 min | client IP |
+| `/mcp`, OAuth mode | 60 requests / min, token bucket (bursts up to 60) | hash of the bearer token |
+| `/mcp`, legacy fixed-account mode | same bucket | client IP |
+| `/mcp`, failed token verifications | 20 failures / 5 min | client IP |
 
-**Fail-open:** if Redis is unreachable, errors, or exceeds a short timeout,
-the request is allowed and the error is logged. A Redis outage must not
-block login or tool calls. With `REDIS_URL` unset (local development), the
-limiter is a no-op.
+Rejections return `429` with a `Retry-After` header. Each OAuth route has
+its own counter.
+
+**Fail-open:** if Redis is unreachable, errors, or exceeds a timeout, the
+request is allowed and the error is logged. A Redis outage must not block
+login or tool calls. With `REDIS_URL` unset (local development), the limiter
+is a no-op.
+
+### Decisions made during implementation
+
+The points left open when this ADR was accepted were settled in issue #21:
+
+- **Identity key for `/mcp`:** a SHA-256 hash of the bearer token, checked
+  *before* `verifyGithubToken`. The GitHub login is only known after that
+  verification, which already costs one `GET /user` per request; limiting
+  first means requests over the limit never reach GitHub. Hashing keeps the
+  token itself out of Redis. To stop floods of *invalid* tokens (each of
+  which would otherwise cost a `GET /user` and get a fresh key), failed
+  verifications are counted in a separate per-IP window, checked without
+  incrementing before anything else and incremented only when GitHub rejects
+  a token.
+- **Atomicity:** a single Lua script (`EVAL`) handles the fixed window, the
+  token bucket and the read-only check of the failure window. Redis runs it
+  atomically, and it takes the time from Redis `TIME` so different instances
+  never disagree about "now". `INCR` + `EXPIRE` was rejected because the two
+  steps are not atomic: a crash between them leaves a counter without expiry.
+- **Client IP:** the first value of `x-forwarded-for`. Vercel overwrites that
+  header with the real client address, so it cannot be spoofed by the caller
+  (https://vercel.com/docs/headers/request-headers).
+- **Timeouts:** opening the Redis connection on a cold start takes longer
+  than a command, and with a single 300 ms timeout the first request of every
+  cold instance failed open. Connecting now waits up to 1 s; each command
+  still times out after 300 ms. Only the first request of an instance pays
+  the connection wait.
 
 ## Consequences
 
 - A second stateful dependency (`REDIS_URL`) joins `MONGODB_URI` on Vercel;
-  it must be documented in `.env.example`, the README and
-  `docs/self-hosting.md`.
+  it is documented in `.env.example`, the README and `docs/self-hosting.md`.
+- The Redis provider must support `EVAL`.
 - Fail-open means a Redis outage temporarily removes protection. This is an
   accepted trade-off for a public connector where availability of legitimate
-  use matters more than strict enforcement.
-- Open implementation points, to be settled in issue #21 before coding: the
-  identity key for `/mcp` (GitHub login vs a hash of the bearer token),
-  atomicity approach (Lua script vs `INCR` + `EXPIRE`), and which header
-  carries the trusted client IP on Vercel.
+  use matters more than strict enforcement. The limiter reduces exposure; it
+  is not a substitute for a WAF.
+- `/mcp` in OAuth mode makes two Redis round trips per request (failure-window
+  check, then the bucket).
+- Limits are constants in the code. Changing them means a code change.
+- Clients sharing one GitHub token share one `/mcp` bucket.
+
+## Out of scope
+
+- Caching the token-to-login resolution in Redis to avoid a `GET /user` on
+  every `/mcp` request. It would reduce GitHub API usage further, but it is a
+  separate optimization.

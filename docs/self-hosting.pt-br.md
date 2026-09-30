@@ -77,6 +77,28 @@ tier free M0 é suficiente). O token de uma conta vinculada fica guardado
 criptografado (AES-256-GCM, reaproveitando os mesmos helpers do fluxo base
 de OAuth) — nunca em texto puro.
 
+### Armazenamento do limite de requisições
+
+Todo endpoint público tem limite de requisições, com contadores guardados no
+Redis, porque cada invocação serverless é isolada e precisa de um
+armazenamento compartilhado entre elas (veja o
+[ADR 0003](./adr/0003-redis-rate-limiting.md)). Vale para os dois modos de
+autenticação.
+
+- **Configuração:** defina `REDIS_URL` com uma URL de conexão Redis padrão.
+  Na Vercel, o jeito mais fácil é a integração Redis do Marketplace, que
+  define `REDIS_URL` pra você. Use um store dedicado, separado de outros
+  dados.
+- **Requisito:** o servidor roda um pequeno script Lua via `EVAL`, então o
+  provedor de Redis precisa suportá-lo (a maioria suporta).
+- **Sem ele:** se `REDIS_URL` não estiver definido (por exemplo, em
+  desenvolvimento local), o limite fica desligado e nada mais muda.
+- **Se o Redis cair:** as requisições passam e o erro é logado (fail-open),
+  então uma queda nunca bloqueia o login nem as chamadas de ferramenta. A
+  conexão espera até 1 s; cada comando expira em 300 ms.
+- **Limites:** fixos no código por enquanto — veja a tabela no
+  [`README.pt-br.md`](../README.pt-br.md#limite-de-requisições) principal.
+
 ## Modo legado (sem OAuth) — conta única ou múltiplas contas fixas
 
 Se `GITHUB_OAUTH_CLIENT_ID` não estiver definido, o servidor cai
@@ -104,8 +126,9 @@ configuradas. Use o modo OAuth se isso for uma preocupação.
 3. Se for usar OAuth: crie o GitHub OAuth App apontando o callback pra
    `https://<url-da-vercel>/callback`, depois configure as variáveis
    (`GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`,
-   `OAUTH_ENCRYPTION_KEY`, e `MONGODB_URI` se quiser o vínculo de múltiplas
-   contas) e faça um redeploy.
+   `OAUTH_ENCRYPTION_KEY`, `MONGODB_URI` se quiser o vínculo de múltiplas
+   contas, e `REDIS_URL` pra ativar o limite de requisições) e faça um
+   redeploy.
 4. Se for usar o modo legado: configure `GITHUB_TOKEN` (ou `GITHUB_ACCOUNTS`)
    e faça um redeploy.
 5. A URL do MCP é: `https://<seu-projeto>.vercel.app/mcp`
@@ -129,3 +152,4 @@ agrupada por modo.
 
 - [0001 — Git Data API for large commits](./adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./adr/0002-multi-account-oauth-linking.md)
+- [0003 — Redis-backed rate limiting](./adr/0003-redis-rate-limiting.md)
