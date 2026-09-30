@@ -19,9 +19,6 @@ export async function rateLimitOAuthRoute(
   tier: keyof typeof TIERS
 ): Promise<Response | null> {
   const { limit, windowMs } = TIERS[tier];
-  const key = `oauth:${route}:${getClientIp(req)}`;
-  console.log(`[ratelimit-debug] key=${key} xff=${req.headers.get("x-forwarded-for")} redis=${Boolean(process.env.REDIS_URL)}`);
-  const result = await checkWindow(key, limit, windowMs);
-  console.log(`[ratelimit-debug] allowed=${result.allowed} retry=${result.retryAfterSeconds}`);
+  const result = await checkWindow(`oauth:${route}:${getClientIp(req)}`, limit, windowMs);
   return result.allowed ? null : tooManyRequests(result.retryAfterSeconds);
 }
