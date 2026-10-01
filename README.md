@@ -153,6 +153,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
 - [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
 - [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
+- [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
 
 ## License
 
