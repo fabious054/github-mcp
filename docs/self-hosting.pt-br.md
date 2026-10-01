@@ -171,3 +171,4 @@ agrupada por modo.
 - [0001 — Git Data API for large commits](./adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./adr/0002-multi-account-oauth-linking.md)
 - [0003 — Redis-backed rate limiting](./adr/0003-redis-rate-limiting.md)
+- [0004 — Transient GitHub errors answered with 503, not 401](./adr/0004-transient-github-errors-503.md)
