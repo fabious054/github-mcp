@@ -100,9 +100,12 @@ duas vezes ou gerenciar conexões separadas:
 3. A partir daí, toda ferramenta que aponta pra um repositório escolhe a
    conta certa automaticamente: se só a sua conta primária estiver
    vinculada, nada muda; se mais de uma estiver vinculada, o servidor checa
-   qual(is) tem acesso ao repositório-alvo e usa a que bater
-   automaticamente, ou pede pra você repetir a chamada com `account`
-   explícito quando mais de uma bater.
+   o que cada uma pode fazer no repositório-alvo e usa a única conta que
+   consegue **escrever** nele. Num repositório em que nenhuma escreve (por
+   exemplo, um repo público de outra pessoa), usa a sua conta primária. Só
+   pede pra você repetir a chamada com `account` explícito quando mais de
+   uma conta consegue escrever no repositório (veja a
+   [ADR 0006](./docs/adr/0006-account-selection-by-write-access.md)).
 4. `list_accounts` lista todas as contas vinculadas à sua sessão, e
    `list_repos_by_account` lista o que uma conta específica acessa — útil
    pra conferir antes de uma chamada, ou pra descobrir qual `account`
@@ -159,6 +162,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
 - [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
+- [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
 
 ## Licença
 

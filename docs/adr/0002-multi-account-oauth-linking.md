@@ -3,6 +3,11 @@
 ## Status
 Accepted (2026-09-22)
 
+Amended by [ADR 0006](./0006-account-selection-by-write-access.md) (2026-10-01):
+auto-detection now picks the account by its access level on the repository
+(write before read, then the primary account), so public repositories are no
+longer ambiguous just because every linked account can read them.
+
 ## Context
 
 Issue #10 asks for linking any number of GitHub accounts to a single
