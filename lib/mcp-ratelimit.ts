@@ -6,6 +6,7 @@ import {
   peekWindow,
   tooManyRequests,
 } from "./ratelimit";
+import { audit, tokenFingerprint } from "./audit";
 
 // Rate limiting for /mcp (see docs/adr/0003-redis-rate-limiting.md).
 //
@@ -44,14 +45,30 @@ export async function rateLimitMcp(req: Request, oauth: boolean): Promise<Respon
       FAILED_VERIFICATION_LIMIT,
       FAILED_VERIFICATION_WINDOW_MS
     );
-    if (!blocked.allowed) return tooManyRequests(blocked.retryAfterSeconds);
+    if (!blocked.allowed) {
+      audit("ratelimit.blocked", {
+        route: "mcp",
+        limit: "failed-verification-window",
+        ip: getClientIp(req),
+        retryAfterSeconds: blocked.retryAfterSeconds,
+      });
+      return tooManyRequests(blocked.retryAfterSeconds);
+    }
   }
 
   const token = oauth ? getBearerToken(req) : undefined;
   // No token (legacy mode, or an unauthenticated probe): fall back to the IP.
   const key = token ? `mcp:token:${hashKey(token)}` : `mcp:ip:${getClientIp(req)}`;
   const result = await checkBucket(key, BUCKET_CAPACITY, BUCKET_REFILL_MS);
-  return result.allowed ? null : tooManyRequests(result.retryAfterSeconds);
+  if (result.allowed) return null;
+  audit("ratelimit.blocked", {
+    route: "mcp",
+    limit: token ? "token-bucket" : "ip-bucket",
+    tokenFp: tokenFingerprint(token),
+    ip: getClientIp(req),
+    retryAfterSeconds: result.retryAfterSeconds,
+  });
+  return tooManyRequests(result.retryAfterSeconds);
 }
 
 // Call when GitHub rejects a bearer token, so repeated failures from one IP

@@ -6,6 +6,13 @@ import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
 import { getLinkedAccounts } from "../../lib/accounts";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
+import { getClientIp } from "../../lib/ratelimit";
+import { audit, tokenFingerprint } from "../../lib/audit";
+import {
+  serviceUnavailable,
+  verifyGithubTokenWithGithub,
+  type GithubVerification,
+} from "../../lib/github-auth";
 
 export const runtime = "nodejs";
 
@@ -926,21 +933,32 @@ const rawHandler = createMcpHandler(
   { verboseLogs: process.env.NODE_ENV !== "production", maxDuration: 60 }
 );
 
+// The token is checked against GitHub once per request, in `handler` below,
+// BEFORE withMcpAuth runs. withMcpAuth turns any error thrown by its verifier
+// into a 401, which the MCP client treats as a lost login — so a transient
+// GitHub error must be answered (503) before it ever reaches withMcpAuth.
+// The classified result is handed to the verifier through this map, keyed by
+// the same Request object, so there is still a single GET /user per request.
+const verifiedRequests = new WeakMap<Request, GithubVerification>();
+
+// Same parsing as mcp-handler's withMcpAuth, so both see the same token.
+function bearerTokenOf(req: Request): string | undefined {
+  const [type, token] = req.headers.get("Authorization")?.split(" ") || [];
+  return type?.toLowerCase() === "bearer" ? token : undefined;
+}
+
 async function verifyGithubToken(req: Request, bearerToken?: string) {
   if (!bearerToken) return undefined;
-  const res = await fetch("https://api.github.com/user", {
-    headers: { Authorization: `Bearer ${bearerToken}`, "User-Agent": "github-mcp-oauth" },
-  });
-  if (!res.ok) {
-    await recordFailedTokenVerification(req);
+  const result = verifiedRequests.get(req) ?? (await verifyGithubTokenWithGithub(bearerToken));
+  if (result.kind !== "ok") {
+    // Only "rejected" can reach here: "transient" is answered in `handler`.
     throw new Error("Invalid or expired GitHub token.");
   }
-  const user = await res.json();
   return {
     token: bearerToken,
     clientId: "github-oauth",
     scopes: [],
-    extra: { githubLogin: user.login as string },
+    extra: { githubLogin: result.login },
   };
 }
 
@@ -951,6 +969,34 @@ const authedHandler = oauthEnabled() ? withMcpAuth(rawHandler, verifyGithubToken
 async function handler(req: Request) {
   const limited = await rateLimitMcp(req, oauthEnabled());
   if (limited) return limited;
+
+  const bearerToken = oauthEnabled() ? bearerTokenOf(req) : undefined;
+  if (bearerToken) {
+    const result = await verifyGithubTokenWithGithub(bearerToken);
+    verifiedRequests.set(req, result);
+
+    if (result.kind === "transient") {
+      const { kind, ...diagnostics } = result;
+      audit("mcp.auth.transient", {
+        ...diagnostics,
+        tokenFp: tokenFingerprint(bearerToken),
+        ip: getClientIp(req),
+      });
+      return serviceUnavailable(result.retryAfterSeconds);
+    }
+
+    if (result.kind === "rejected") {
+      const { kind, ...diagnostics } = result;
+      audit("mcp.auth.rejected", {
+        ...diagnostics,
+        tokenFp: tokenFingerprint(bearerToken),
+        ip: getClientIp(req),
+      });
+      // Only a genuine rejection counts toward the per-IP failure window.
+      await recordFailedTokenVerification(req);
+    }
+  }
+
   return authedHandler(req);
 }
 

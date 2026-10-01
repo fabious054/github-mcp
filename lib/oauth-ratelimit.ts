@@ -1,4 +1,5 @@
 import { checkWindow, getClientIp, tooManyRequests } from "./ratelimit";
+import { audit } from "./audit";
 
 // Per-IP limits for the public OAuth routes (see docs/adr/0003-redis-rate-limiting.md).
 // No identity exists yet at these endpoints, so the client IP is the only
@@ -19,6 +20,14 @@ export async function rateLimitOAuthRoute(
   tier: keyof typeof TIERS
 ): Promise<Response | null> {
   const { limit, windowMs } = TIERS[tier];
-  const result = await checkWindow(`oauth:${route}:${getClientIp(req)}`, limit, windowMs);
-  return result.allowed ? null : tooManyRequests(result.retryAfterSeconds);
+  const ip = getClientIp(req);
+  const result = await checkWindow(`oauth:${route}:${ip}`, limit, windowMs);
+  if (result.allowed) return null;
+  audit("ratelimit.blocked", {
+    route,
+    limit: `${tier}-window`,
+    ip,
+    retryAfterSeconds: result.retryAfterSeconds,
+  });
+  return tooManyRequests(result.retryAfterSeconds);
 }
