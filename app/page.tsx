@@ -21,7 +21,7 @@ const FEATURES = [
   {
     icon: "☰",
     title: "Issues & board",
-    desc: "List, create, and comment on issues — including posting a final QA report.",
+    desc: "List, create, read in full with every comment, and comment on issues — including posting a final QA report.",
   },
   {
     icon: "⌕",
@@ -131,9 +131,9 @@ export default function Home() {
         <section id="features">
           <h2>What it can do</h2>
           <p className="section-lead">
-            Sixteen tools covering the day-to-day GitHub workflow, plus a
-            couple built specifically for working across more than one
-            account.
+            Twenty-three tools covering the day-to-day GitHub workflow,
+            including three built specifically for working across more
+            than one account.
           </p>
           <div className="features-grid">
             {FEATURES.map((f) => (

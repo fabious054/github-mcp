@@ -41,6 +41,7 @@ target. See [Available tools](#available-tools) below.
 - `list_prs` — lists PRs
 - `comment_pr` — comments on a PR
 - `list_issues` — lists issues (board tasks)
+- `get_issue` — reads an issue in full: description and every comment, in order
 - `create_issue` — creates an issue
 - `comment_issue` — comments on an issue (e.g. final QA report)
 - `read_file` — reads a file's content
