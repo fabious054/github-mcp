@@ -3,7 +3,8 @@
 *[Read in English](./README.md)*
 
 MCP server que dá ao Claude acesso real ao GitHub: criar branch, commitar,
-abrir/comentar PRs, listar/criar/comentar issues, ler arquivos e buscar código.
+abrir/comentar PRs, listar, criar, ler e comentar issues, ler arquivos e buscar
+código.
 
 ## Conectar nesta instância
 
@@ -41,6 +42,7 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `list_prs` — lista PRs
 - `comment_pr` — comenta num PR
 - `list_issues` — lista issues (tarefas do board)
+- `get_issue` — lê uma issue completa: descrição e todos os comentários, em ordem
 - `create_issue` — cria uma issue
 - `comment_issue` — comenta numa issue (ex: relatório final de QA)
 - `read_file` — lê o conteúdo de um arquivo

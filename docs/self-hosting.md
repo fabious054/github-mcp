@@ -144,6 +144,8 @@ that's a concern.
 
 ## Local development
 
+Requires Node.js 20.9 or newer (the minimum for Next.js 16).
+
 ```bash
 npm install
 cp .env.example .env.local   # fill in the variables for the mode you're using

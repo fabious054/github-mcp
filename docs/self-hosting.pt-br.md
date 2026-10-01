@@ -153,6 +153,8 @@ configuradas. Use o modo OAuth se isso for uma preocupação.
 
 ## Desenvolvimento local
 
+Requer Node.js 20.9 ou mais novo (o mínimo do Next.js 16).
+
 ```bash
 npm install
 cp .env.example .env.local   # preencha as variáveis do modo que for usar
