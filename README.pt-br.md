@@ -3,7 +3,8 @@
 *[Read in English](./README.md)*
 
 MCP server que dá ao Claude acesso real ao GitHub: criar branch, commitar,
-abrir/comentar PRs, listar/criar/comentar issues, ler arquivos e buscar código.
+abrir/comentar PRs, listar, criar, ler e comentar issues, ler arquivos e buscar
+código.
 
 ## Conectar nesta instância
 

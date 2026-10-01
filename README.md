@@ -3,8 +3,8 @@
 *[Leia em português](./README.pt-br.md)*
 
 An MCP server that gives Claude real access to GitHub: create branches, commit,
-open/comment on PRs, list/create/comment on issues, read files, and search
-code.
+open/comment on PRs, list, create, read and comment on issues, read files, and
+search code.
 
 ## Connect to this instance
 
