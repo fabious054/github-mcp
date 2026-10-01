@@ -35,6 +35,27 @@ vulnerabilidade.
   instância compartilhada. Veja
   [`docs/self-hosting.pt-br.md`](./docs/self-hosting.pt-br.md).
 
+## Logs de auditoria
+
+Eventos de autenticação e de limite de requisições são gravados nos logs de
+execução, um JSON por linha (busque por `"audit":` nos logs da Vercel):
+
+| Evento | Quando |
+|---|---|
+| `mcp.auth.rejected` | O GitHub recusou o token no `/mcp` (resposta 401; o cliente precisa reconectar) |
+| `mcp.auth.transient` | O GitHub não conseguiu validar o token naquele momento — 5xx, limite de requisições, erro de rede ou timeout (resposta 503 + `Retry-After`; a sessão é mantida) |
+| `ratelimit.blocked` | Uma requisição recebeu 429, com a rota e qual limite estourou |
+| `oauth.token.issued` | Um login OAuth terminou e o Claude recebeu o token |
+| `oauth.link.completed` / `oauth.link.failed` | Um fluxo de `link_account` terminou ou falhou |
+
+Cada linha traz o necessário pra diagnóstico: status do GitHub, o
+`x-github-request-id` do GitHub, cabeçalhos de limite quando existem, o IP
+do cliente e uma **impressão digital do token** (os 12 primeiros caracteres
+hex do SHA-256 do token — suficiente pra correlacionar eventos, inútil pra
+recuperar o token). **Nenhum token é registrado em log** — nem o bearer do
+MCP, nem o token do GitHub, nem o de uma conta vinculada. Chamadas de
+ferramenta bem-sucedidas não são registradas.
+
 ## O que foi verificado antes de abrir este repositório
 
 - `.gitignore` exclui `.env`, `.env.local` e `.vercel` — nenhum arquivo de

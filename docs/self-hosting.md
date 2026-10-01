@@ -93,6 +93,23 @@ to both authentication modes.
 - **Limits:** fixed in code for now — see the table in the main
   [`README.md`](../README.md#rate-limiting).
 
+### Token verification and audit logs
+
+On every `/mcp` call in OAuth mode the token is checked once against
+GitHub's `GET /user`. The answer is classified so that a problem on
+GitHub's side is never mistaken for a revoked token:
+
+- **401 (or another non-rate-limit 4xx):** the token is rejected; the server
+  answers 401 and the client starts a new login. These also count toward the
+  per-IP limit on invalid tokens.
+- **5xx, rate-limited 403/429, network error or timeout (5 s):** the server
+  answers **503 with `Retry-After`** instead of 401, so the client retries
+  and keeps the session. These do not count toward the invalid-token limit.
+
+Every rejection, transient failure and 429 is written to the runtime logs
+as a JSON audit line — see [SECURITY.md](../SECURITY.md#audit-logging) for
+the event list. No token is ever logged.
+
 ## Legacy mode (no OAuth) — single or multiple fixed accounts
 
 If `GITHUB_OAUTH_CLIENT_ID` isn't set, the server automatically falls back
