@@ -161,6 +161,29 @@ npm run dev
 
 O servidor MCP local sobe em `http://localhost:3000/mcp`.
 
+### Adicionando uma ferramenta
+
+As ferramentas ficam em `app/[transport]/route.ts` e usam a API da
+`mcp-handler` 2 (SDK do MCP v2, veja o [ADR 0005](./adr/0005-migrate-to-mcp-handler-2.md)):
+
+```ts
+server.registerTool(
+  "tool_name",
+  {
+    description: "What the tool does.",
+    inputSchema: z.object({ ...ownerRepoShape, path: z.string() }),
+  },
+  async ({ account, owner, repo, path }, ctx) => {
+    const { octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+    // ...
+    return { content: [{ type: "text", text: "..." }] };
+  }
+);
+```
+
+A forma antiga `server.tool(nome, descrição, shape, cb)` da 1.x não existe
+mais, e a autenticação da sessão é lida de `ctx.http?.authInfo`.
+
 ## Referência das variáveis de ambiente
 
 Veja [`.env.example`](../.env.example) pra lista completa com comentários,
@@ -172,3 +195,4 @@ agrupada por modo.
 - [0002 — Multi-account OAuth linking](./adr/0002-multi-account-oauth-linking.md)
 - [0003 — Redis-backed rate limiting](./adr/0003-redis-rate-limiting.md)
 - [0004 — Transient GitHub errors answered with 503, not 401](./adr/0004-transient-github-errors-503.md)
+- [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./adr/0005-migrate-to-mcp-handler-2.md)
