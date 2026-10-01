@@ -15,7 +15,8 @@ export type AuditEvent =
   | "ratelimit.blocked"
   | "oauth.token.issued"
   | "oauth.link.completed"
-  | "oauth.link.failed";
+  | "oauth.link.failed"
+  | "oauth.link.token_revoked";
 
 type AuditValue = string | number | boolean | null | undefined;
 
@@ -24,6 +25,7 @@ const WARN_EVENTS: ReadonlySet<AuditEvent> = new Set([
   "mcp.auth.transient",
   "ratelimit.blocked",
   "oauth.link.failed",
+  "oauth.link.token_revoked",
 ]);
 
 export function audit(event: AuditEvent, fields: Record<string, AuditValue> = {}): void {
