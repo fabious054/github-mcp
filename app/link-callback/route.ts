@@ -1,6 +1,7 @@
 import { decryptJson, isFresh, oauthErrorResponse, requireOAuthEnabled } from "../../lib/oauth";
 import { linkAccount } from "../../lib/accounts";
 import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
+import { audit } from "../../lib/audit";
 
 export const runtime = "nodejs";
 
@@ -73,6 +74,12 @@ export async function GET(req: Request) {
 
   const tokenBody = (await tokenRes.json()) as GithubTokenResponse;
   if (!tokenRes.ok || !tokenBody.access_token) {
+    audit("oauth.link.failed", {
+      primaryLogin: asState.primaryLogin,
+      step: "code-exchange",
+      githubStatus: tokenRes.status,
+      githubError: tokenBody.error,
+    });
     return oauthErrorResponse(
       502,
       "server_error",
@@ -84,6 +91,12 @@ export async function GET(req: Request) {
     headers: { Authorization: `Bearer ${tokenBody.access_token}`, "User-Agent": "github-mcp-oauth" },
   });
   if (!userRes.ok) {
+    audit("oauth.link.failed", {
+      primaryLogin: asState.primaryLogin,
+      step: "identify-account",
+      githubStatus: userRes.status,
+      githubRequestId: userRes.headers.get("x-github-request-id") ?? undefined,
+    });
     return oauthErrorResponse(502, "server_error", "Could not identify the newly authorized GitHub account.");
   }
   const user = await userRes.json();
@@ -99,6 +112,7 @@ export async function GET(req: Request) {
   }
 
   await linkAccount(asState.primaryLogin, login, tokenBody.access_token);
+  audit("oauth.link.completed", { primaryLogin: asState.primaryLogin, linkedLogin: login });
 
   return htmlResponse(
     `Account '${login}' was successfully linked to your primary account ('${asState.primaryLogin}'). You can close this tab and go back to Claude.`

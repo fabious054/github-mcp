@@ -99,6 +99,24 @@ autenticação.
 - **Limites:** fixos no código por enquanto — veja a tabela no
   [`README.pt-br.md`](../README.pt-br.md#limite-de-requisições) principal.
 
+### Validação do token e logs de auditoria
+
+Em cada chamada ao `/mcp` no modo OAuth, o token é checado uma vez no
+`GET /user` do GitHub. A resposta é classificada pra que um problema do
+lado do GitHub nunca seja confundido com um token revogado:
+
+- **401 (ou outro 4xx que não seja limite de requisições):** o token é
+  recusado; o servidor responde 401 e o cliente inicia um novo login. Esses
+  casos também contam no limite por IP de tokens inválidos.
+- **5xx, 403/429 por limite, erro de rede ou timeout (5 s):** o servidor
+  responde **503 com `Retry-After`** em vez de 401, então o cliente tenta de
+  novo e mantém a sessão. Esses casos não contam no limite de tokens
+  inválidos.
+
+Toda recusa, falha transitória e 429 vira uma linha JSON de auditoria nos
+logs de execução — veja o [SECURITY.pt-br.md](../SECURITY.pt-br.md#logs-de-auditoria)
+pra lista de eventos. Nenhum token é registrado em log.
+
 ## Modo legado (sem OAuth) — conta única ou múltiplas contas fixas
 
 Se `GITHUB_OAUTH_CLIENT_ID` não estiver definido, o servidor cai

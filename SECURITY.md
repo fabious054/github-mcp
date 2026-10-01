@@ -32,6 +32,26 @@ before making the repository public, and how to report a vulnerability.
   setups; OAuth mode is recommended for anything shared. See
   [`docs/self-hosting.md`](./docs/self-hosting.md).
 
+## Audit logging
+
+Authentication and rate-limit events are written to the runtime logs as one
+JSON line each (search for `"audit":` in the Vercel logs):
+
+| Event | When |
+|---|---|
+| `mcp.auth.rejected` | GitHub rejected the token on `/mcp` (answered with 401; the client must reconnect) |
+| `mcp.auth.transient` | GitHub could not verify the token right now — 5xx, rate limit, network error or timeout (answered with 503 + `Retry-After`; the session is kept) |
+| `ratelimit.blocked` | A request was answered with 429, with the route and which limit tripped |
+| `oauth.token.issued` | An OAuth login finished and Claude received its token |
+| `oauth.link.completed` / `oauth.link.failed` | A `link_account` flow finished or failed |
+
+Each line carries what is needed to diagnose it: the GitHub status code,
+GitHub's `x-github-request-id`, rate-limit headers when present, the client
+IP and a **token fingerprint** (the first 12 hex characters of the token's
+SHA-256, enough to correlate events, useless for recovering the token).
+**No token is ever logged** — not the MCP bearer, not a GitHub token, not a
+linked account's token. Successful tool calls are not logged.
+
 ## What was checked before opening this repository
 
 - `.gitignore` excludes `.env`, `.env.local` and `.vercel` — no secret file

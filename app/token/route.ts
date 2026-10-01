@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { decryptJson, isFresh, jsonResponse, oauthErrorResponse, requireOAuthEnabled } from "../../lib/oauth";
 import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
+import { audit } from "../../lib/audit";
 
 export const runtime = "nodejs";
 
@@ -68,6 +69,11 @@ export async function POST(req: Request) {
   if (!codeVerifier || sha256Base64Url(codeVerifier) !== authCode.codeChallenge) {
     return oauthErrorResponse(400, "invalid_grant", "Invalid code_verifier (PKCE).");
   }
+
+  audit("oauth.token.issued", {
+    githubLogin: authCode.githubLogin,
+    mcpClientId: authCode.mcpClientId.slice(0, 16),
+  });
 
   return jsonResponse({
     access_token: authCode.githubToken,
