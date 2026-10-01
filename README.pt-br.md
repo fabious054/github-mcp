@@ -106,10 +106,18 @@ duas vezes ou gerenciar conexões separadas:
    pede pra você repetir a chamada com `account` explícito quando mais de
    uma conta consegue escrever no repositório (veja a
    [ADR 0006](./docs/adr/0006-account-selection-by-write-access.md)).
-4. `list_accounts` lista todas as contas vinculadas à sua sessão, e
+4. `list_accounts` lista todas as contas vinculadas à sua sessão, com o
+   estado da autorização de cada conta vinculada, e
    `list_repos_by_account` lista o que uma conta específica acessa — útil
    pra conferir antes de uma chamada, ou pra descobrir qual `account`
    informar quando o erro de ambiguidade acima acontecer.
+
+Se o GitHub deixar de aceitar a autorização de uma conta vinculada (você
+revogou, ou o GitHub expirou), o servidor não passa a usar outra conta por
+conta própria: as chamadas que dependem da detecção automática param e dizem
+qual conta vincular de novo com `link_account`, e o `list_accounts` marca ela
+como revogada. Enquanto isso, dá pra informar `account` explicitamente (veja
+a [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)).
 
 ## Limite de requisições
 
@@ -163,6 +171,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
 - [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
+- [0007 — Never pick an account while a linked one is revoked](./docs/adr/0007-revoked-linked-accounts.md)
 
 ## Licença
 

@@ -47,6 +47,7 @@ execução, um JSON por linha (busque por `"audit":` nos logs da Vercel):
 | `ratelimit.blocked` | Uma requisição recebeu 429, com a rota e qual limite estourou |
 | `oauth.token.issued` | Um login OAuth terminou e o Claude recebeu o token |
 | `oauth.link.completed` / `oauth.link.failed` | Um fluxo de `link_account` terminou ou falhou |
+| `oauth.link.token_revoked` | O GitHub recusou o token guardado de uma conta vinculada (revogado ou expirado), com o ponto em que isso foi detectado; a conta precisa ser vinculada de novo (veja a [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)) |
 
 Cada linha traz o necessário pra diagnóstico: status do GitHub, o
 `x-github-request-id` do GitHub, cabeçalhos de limite quando existem, o IP
