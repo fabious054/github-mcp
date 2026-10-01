@@ -13,15 +13,21 @@
 //    - several can read             → the primary if it is among them,
 //                                     otherwise ask.
 // 4. None can read                  → no access.
+//
+// Before any of that (ADR 0007): if an account's token was revoked, or GitHub
+// could not answer for an account, the server does not pick at all — it never
+// decides on incomplete information.
 
-export type RepoAccess = "write" | "read" | "none";
+export type RepoAccess = "write" | "read" | "none" | "revoked" | "unavailable";
 
 export type AccountAccess<T> = { candidate: T; login: string; access: RepoAccess };
 
 export type AccountPick<T> =
   | { kind: "picked"; candidate: T; login: string }
   | { kind: "ambiguous"; options: AccountAccess<T>[] }
-  | { kind: "no-access" };
+  | { kind: "no-access" }
+  | { kind: "revoked"; logins: string[] }
+  | { kind: "unavailable"; logins: string[] };
 
 // Maps the `permissions` object of GitHub's `GET /repos/{owner}/{repo}` to an
 // access level. `push`, `maintain` and `admin` all allow writing.
@@ -33,10 +39,40 @@ export function accessFromPermissions(
   return "read";
 }
 
+// Classifies an error thrown by Octokit's `repos.get` for one account:
+// - 401 → the token is no longer valid (revoked or expired);
+// - 5xx, 429, a rate-limited 403, or no HTTP status at all (network error) →
+//   GitHub could not answer right now;
+// - anything else (404, a plain 403) → the account has no access.
+export function accessFromError(err: unknown): RepoAccess {
+  const e = err as { status?: unknown; message?: unknown; response?: { headers?: Record<string, unknown> } };
+  const status = typeof e?.status === "number" ? e.status : undefined;
+  if (status === undefined) return "unavailable";
+  if (status === 401) return "revoked";
+  if (status >= 500 || status === 429) return "unavailable";
+  if (status === 403) {
+    const headers = e.response?.headers ?? {};
+    const message = typeof e.message === "string" ? e.message : "";
+    if (
+      headers["x-ratelimit-remaining"] === "0" ||
+      headers["retry-after"] !== undefined ||
+      /rate limit/i.test(message)
+    ) {
+      return "unavailable";
+    }
+  }
+  return "none";
+}
+
 export function pickAccount<T>(
   results: AccountAccess<T>[],
   primaryLogin: string | undefined
 ): AccountPick<T> {
+  const revoked = results.filter((r) => r.access === "revoked");
+  if (revoked.length > 0) return { kind: "revoked", logins: revoked.map((r) => r.login) };
+  const unavailable = results.filter((r) => r.access === "unavailable");
+  if (unavailable.length > 0) return { kind: "unavailable", logins: unavailable.map((r) => r.login) };
+
   const writers = results.filter((r) => r.access === "write");
   if (writers.length === 1) return { kind: "picked", candidate: writers[0].candidate, login: writers[0].login };
   if (writers.length > 1) return { kind: "ambiguous", options: writers };

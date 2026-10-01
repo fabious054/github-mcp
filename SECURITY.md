@@ -44,6 +44,7 @@ JSON line each (search for `"audit":` in the Vercel logs):
 | `ratelimit.blocked` | A request was answered with 429, with the route and which limit tripped |
 | `oauth.token.issued` | An OAuth login finished and Claude received its token |
 | `oauth.link.completed` / `oauth.link.failed` | A `link_account` flow finished or failed |
+| `oauth.link.token_revoked` | GitHub rejected a linked account's stored token (revoked or expired), with where it was detected; the account must be re-linked (see [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)) |
 
 Each line carries what is needed to diagnose it: the GitHub status code,
 GitHub's `x-github-request-id`, rate-limit headers when present, the client

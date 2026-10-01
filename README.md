@@ -104,10 +104,18 @@ or juggle separate connections:
    call with an explicit `account` only when more than one account can
    write to the repository (see
    [ADR 0006](./docs/adr/0006-account-selection-by-write-access.md)).
-4. `list_accounts` lists every account linked to your session, and
+4. `list_accounts` lists every account linked to your session, with the
+   status of each linked account's authorization, and
    `list_repos_by_account` lists what a specific one can access — handy to
    check before a call, or to figure out which `account` to pass when the
    ambiguity error above happens.
+
+If GitHub stops accepting a linked account's authorization (you revoked it,
+or GitHub expired it), the server does not quietly fall back to another
+account: calls that rely on automatic detection stop and tell you which
+account to re-link with `link_account`, and `list_accounts` marks it as
+revoked. You can still pass `account` explicitly in the meantime (see
+[ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)).
 
 ## Rate limiting
 
@@ -159,6 +167,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
 - [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
+- [0007 — Never pick an account while a linked one is revoked](./docs/adr/0007-revoked-linked-accounts.md)
 
 ## License
 

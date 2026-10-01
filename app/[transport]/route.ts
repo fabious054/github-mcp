@@ -5,7 +5,7 @@ import { z } from "zod";
 import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
 import { getLinkedAccounts } from "../../lib/accounts";
-import { accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
+import { accessFromError, accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -135,14 +135,46 @@ async function getOAuthCandidates(
 }
 
 // Asks GitHub what a token can do on a specific repository: write, read
-// only, or nothing. Used for automatic account detection when more than one
-// account is linked to the session (ADR 0006).
+// only, nothing — or whether the token was revoked, or GitHub could not
+// answer. Used for automatic account detection when more than one account is
+// linked to the session (ADR 0006, ADR 0007).
 async function candidateAccess(token: string, owner: string, repo: string): Promise<RepoAccess> {
   try {
     const { data } = await new Octokit({ auth: token }).repos.get({ owner, repo });
     return accessFromPermissions(data.permissions);
-  } catch {
-    return "none";
+  } catch (err) {
+    return accessFromError(err);
+  }
+}
+
+// Message shown whenever a linked account's GitHub authorization is no longer
+// valid (ADR 0007). The server never falls back to another account in that
+// case: the caller decides.
+function revokedAccountsMessage(logins: string[]): string {
+  const list = logins.map((l) => `'${l}'`).join(", ");
+  return `${logins.length === 1 ? "Account" : "Accounts"} ${list} ${
+    logins.length === 1 ? "is" : "are"
+  } linked to your session, but GitHub no longer accepts ${
+    logins.length === 1 ? "its" : "their"
+  } authorization (revoked or expired). Run 'link_account' and re-authorize with ${
+    logins.length === 1 ? "that account" : "each of them"
+  }, or repeat the call with 'account' set to the account you want to use.`;
+}
+
+function auditRevoked(
+  primaryLogin: string | undefined,
+  candidates: OAuthCandidate[],
+  logins: string[],
+  where: string
+): void {
+  for (const login of logins) {
+    const c = candidates.find((x) => x.login === login);
+    audit("oauth.link.token_revoked", {
+      primaryLogin,
+      linkedLogin: login,
+      tokenFingerprint: tokenFingerprint(c?.token),
+      where,
+    });
   }
 }
 
@@ -194,6 +226,17 @@ async function resolveRepo(
     );
     const pick = pickAccount(results, primaryLogin);
 
+    if (pick.kind === "revoked") {
+      auditRevoked(primaryLogin, candidates, pick.logins, "resolveRepo");
+      throw new Error(revokedAccountsMessage(pick.logins));
+    }
+    if (pick.kind === "unavailable") {
+      throw new Error(
+        `GitHub could not be reached for ${pick.logins
+          .map((l) => `'${l}'`)
+          .join(", ")} right now, so the account for '${o}/${r}' can't be chosen safely. Try again in a few seconds, or repeat the call with 'account' set.`
+      );
+    }
     if (pick.kind === "picked") {
       return { owner: o, repo: r, octokit: new Octokit({ auth: pick.candidate.token }), accountName: pick.login };
     }
@@ -900,7 +943,7 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "list_accounts",
       {
-        description: "Lists the GitHub accounts linked to your current session: the primary account (authenticated via OAuth) and any additional account linked with 'link_account'. Use it to check which accounts are available for automatic repository detection.",
+        description: "Lists the GitHub accounts linked to your current session: the primary account (authenticated via OAuth) and any additional account linked with 'link_account', with the status of each linked account's authorization (ok, revoked — re-link needed, or could not be checked right now). Use it to check which accounts are available for automatic repository detection.",
         inputSchema: z.object({}),
       },
       async (_args, ctx) => {
@@ -913,10 +956,30 @@ const rawHandler = createMcpHandler(
           throw new Error("Could not identify your primary account (GitHub login missing from the session).");
         }
         const linked = await getLinkedAccounts(primaryLogin);
-        const lines = [
-          `${primaryLogin} [primary]`,
-          ...linked.map((a) => `${a.login} — linked on ${a.linkedAt}`),
-        ];
+        // One GET /user per linked account, only when this tool is called
+        // (ADR 0007). The primary token was already verified on this request.
+        const checks = await Promise.all(linked.map((a) => verifyGithubTokenWithGithub(a.token)));
+        const lines = [`${primaryLogin} [primary]`];
+        linked.forEach((a, i) => {
+          const check = checks[i];
+          let status: string;
+          if (check.kind === "ok") {
+            status = "authorization ok";
+          } else if (check.kind === "rejected") {
+            status = "authorization revoked, run link_account again to re-link it";
+            audit("oauth.link.token_revoked", {
+              primaryLogin,
+              linkedLogin: a.login,
+              tokenFingerprint: tokenFingerprint(a.token),
+              where: "list_accounts",
+              githubStatus: check.githubStatus,
+              githubRequestId: check.githubRequestId,
+            });
+          } else {
+            status = "authorization could not be checked right now (GitHub unavailable)";
+          }
+          lines.push(`${a.login} — linked on ${a.linkedAt} — ${status}`);
+        });
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
     );
@@ -957,11 +1020,19 @@ const rawHandler = createMcpHandler(
         const octokit = new Octokit({ auth: target.token });
         const repos: string[] = [];
         let page = 1;
-        while (true) {
-          const res = await octokit.repos.listForAuthenticatedUser({ per_page: 100, page, sort: "full_name" });
-          repos.push(...res.data.map((r) => `${r.full_name}${r.private ? " (private)" : ""}`));
-          if (res.data.length < 100) break;
-          page += 1;
+        try {
+          while (true) {
+            const res = await octokit.repos.listForAuthenticatedUser({ per_page: 100, page, sort: "full_name" });
+            repos.push(...res.data.map((r) => `${r.full_name}${r.private ? " (private)" : ""}`));
+            if (res.data.length < 100) break;
+            page += 1;
+          }
+        } catch (err) {
+          if (accessFromError(err) === "revoked") {
+            auditRevoked(primaryLogin, candidates, [target.login], "list_repos_by_account");
+            throw new Error(revokedAccountsMessage([target.login]));
+          }
+          throw err;
         }
 
         return {

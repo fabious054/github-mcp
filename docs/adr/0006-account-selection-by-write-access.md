@@ -3,6 +3,11 @@
 ## Status
 Accepted (2026-10-01). Implemented in issue #47.
 
+Amended by [ADR 0007](./0007-revoked-linked-accounts.md) (2026-10-01): if a
+candidate account's authorization was revoked, or GitHub could not answer for
+one, no account is picked and the caller is asked to re-link, retry or pass
+`account`.
+
 ## Context
 
 When more than one GitHub account is linked to a session (ADR 0002) and a
