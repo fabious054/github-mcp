@@ -31,7 +31,7 @@ const FEATURES = [
   {
     icon: "⚭",
     title: "Multi-account linking",
-    desc: "Link more than one GitHub account to the same session — the server figures out which one to use per repository, automatically.",
+    desc: "Link more than one GitHub account to the same session — the server picks the one that can write to each repository, and asks only when more than one can.",
   },
 ];
 

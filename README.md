@@ -97,10 +97,13 @@ or juggle separate connections:
    with never changes.
 3. From then on, every repo-scoped tool picks the right account
    automatically: if only your primary account is linked, nothing changes;
-   if more than one account is linked, the server checks which one(s) have
-   access to the target repository and uses the match automatically, or
-   asks you to repeat the call with an explicit `account` when more than
-   one matches.
+   if more than one account is linked, the server checks what each one can
+   do on the target repository and uses the only account that can **write**
+   to it. For a repository none of them can write to (e.g. someone else's
+   public repo), it uses your primary account. It asks you to repeat the
+   call with an explicit `account` only when more than one account can
+   write to the repository (see
+   [ADR 0006](./docs/adr/0006-account-selection-by-write-access.md)).
 4. `list_accounts` lists every account linked to your session, and
    `list_repos_by_account` lists what a specific one can access — handy to
    check before a call, or to figure out which `account` to pass when the
@@ -155,6 +158,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
 - [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
+- [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
 
 ## License
 

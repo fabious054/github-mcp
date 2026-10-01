@@ -5,6 +5,7 @@ import { z } from "zod";
 import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
 import { getLinkedAccounts } from "../../lib/accounts";
+import { accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -133,15 +134,15 @@ async function getOAuthCandidates(
   return { primaryLogin, candidates };
 }
 
-// Checks whether a GitHub token has read access to a specific repository —
-// used for automatic account detection when more than one is linked to the
-// session.
-async function candidateHasAccess(token: string, owner: string, repo: string): Promise<boolean> {
+// Asks GitHub what a token can do on a specific repository: write, read
+// only, or nothing. Used for automatic account detection when more than one
+// account is linked to the session (ADR 0006).
+async function candidateAccess(token: string, owner: string, repo: string): Promise<RepoAccess> {
   try {
-    await new Octokit({ auth: token }).repos.get({ owner, repo });
-    return true;
+    const { data } = await new Octokit({ auth: token }).repos.get({ owner, repo });
+    return accessFromPermissions(data.permissions);
   } catch {
-    return false;
+    return "none";
   }
 }
 
@@ -186,22 +187,17 @@ async function resolveRepo(
       };
     }
 
-    // Multiple linked accounts and none specified: auto-detect by checking
-    // which one(s) have access to the target repository.
-    const checked = await Promise.all(
-      candidates.map(async (c) => ((await candidateHasAccess(c.token, o, r)) ? c : null))
+    // Multiple linked accounts and none specified: auto-detect by the access
+    // level each one has on the target repository (ADR 0006).
+    const results = await Promise.all(
+      candidates.map(async (c) => ({ candidate: c, login: c.login, access: await candidateAccess(c.token, o, r) }))
     );
-    const withAccess = checked.filter((c): c is OAuthCandidate => c !== null);
+    const pick = pickAccount(results, primaryLogin);
 
-    if (withAccess.length === 1) {
-      return {
-        owner: o,
-        repo: r,
-        octokit: new Octokit({ auth: withAccess[0].token }),
-        accountName: withAccess[0].login,
-      };
+    if (pick.kind === "picked") {
+      return { owner: o, repo: r, octokit: new Octokit({ auth: pick.candidate.token }), accountName: pick.login };
     }
-    if (withAccess.length === 0) {
+    if (pick.kind === "no-access") {
       throw new Error(
         `None of your linked accounts have access to '${o}/${r}'. Available accounts: ${candidates
           .map((c) => c.login)
@@ -209,8 +205,8 @@ async function resolveRepo(
       );
     }
     throw new Error(
-      `More than one linked account has access to '${o}/${r}' (${withAccess
-        .map((c) => c.login)
+      `More than one linked account can be used for '${o}/${r}' (${pick.options
+        .map((a) => `${a.login}: ${a.access}`)
         .join(", ")}). Repeat the call with 'account' set to the one you want.`
     );
   }
@@ -229,7 +225,7 @@ const ownerRepoShape = {
     .string()
     .optional()
     .describe(
-      "GitHub account login to use for this call. In non-OAuth mode, it's the name of the pre-configured account. In OAuth mode, it's optional: by default the server figures out on its own, among the primary account and any linked with 'link_account', which one has access to the given repository — you only need to pass 'account' when more than one has access to the same repository (the call returns an error asking for it in that case)."
+      "GitHub account login to use for this call. In non-OAuth mode, it's the name of the pre-configured account. In OAuth mode, it's optional: by default the server picks, among the primary account and any linked with 'link_account', the one that can write to the given repository (for a read-only repository, the primary account) — you only need to pass 'account' when more than one account can write to it, or more than one non-primary account can read it (the call returns an error asking for it in that case)."
     ),
   owner: z
     .string()

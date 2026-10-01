@@ -198,3 +198,4 @@ agrupada por modo.
 - [0003 — Redis-backed rate limiting](./adr/0003-redis-rate-limiting.md)
 - [0004 — Transient GitHub errors answered with 503, not 401](./adr/0004-transient-github-errors-503.md)
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./adr/0005-migrate-to-mcp-handler-2.md)
+- [0006 — Pick the linked account by write access](./adr/0006-account-selection-by-write-access.md)
