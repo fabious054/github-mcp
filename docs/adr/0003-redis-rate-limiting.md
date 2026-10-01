@@ -3,6 +3,11 @@
 ## Status
 Accepted (2026-09-30). Implemented in #23, #24 and #25 (issue #21).
 
+Amended by [ADR 0004](./0004-transient-github-errors-503.md) (2026-10-01):
+the failed-verification window now counts only tokens GitHub actually
+rejects. Transient GitHub errors (5xx, rate limits, network errors) are
+answered with 503 and are not counted.
+
 ## Context
 
 The connector is publicly open and frequently shared. No endpoint has any
@@ -72,7 +77,7 @@ The points left open when this ADR was accepted were settled in issue #21:
   which would otherwise cost a `GET /user` and get a fresh key), failed
   verifications are counted in a separate per-IP window, checked without
   incrementing before anything else and incremented only when GitHub rejects
-  a token.
+  a token (since ADR 0004: only genuine rejections, not transient errors).
 - **Atomicity:** a single Lua script (`EVAL`) handles the fixed window, the
   token bucket and the read-only check of the failure window. Redis runs it
   atomically, and it takes the time from Redis `TIME` so different instances

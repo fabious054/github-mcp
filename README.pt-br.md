@@ -118,11 +118,17 @@ servidor responde `429 Too Many Requests` com o header `Retry-After`.
 | `/link-account`, `/link-callback`, `/callback` | 30 requisições / 5 min | IP do cliente |
 | `/mcp` (modo OAuth) | 60 requisições / min (rajadas permitidas) | hash do bearer token |
 | `/mcp` (modo legado) | 60 requisições / min (rajadas permitidas) | IP do cliente |
-| `/mcp`, tokens inválidos | 20 verificações falhas / 5 min | IP do cliente |
+| `/mcp`, tokens inválidos | 20 tokens recusados / 5 min | IP do cliente |
 
 O uso normal fica bem abaixo desses limites. Se o Redis estiver fora do ar,
 as requisições passam (fail-open), então uma queda nunca bloqueia o login
 nem as chamadas de ferramenta.
+
+Se o próprio GitHub não conseguir validar o seu token por um instante (5xx,
+limite de requisições, erro de rede), o `/mcp` responde `503` com
+`Retry-After` em vez de `401`, então o Claude tenta de novo e você não
+precisa reconectar. Só conta como token inválido o que o GitHub de fato
+recusa (veja o [ADR 0004](./docs/adr/0004-transient-github-errors-503.md)).
 
 ## Segurança
 
@@ -134,6 +140,9 @@ nem as chamadas de ferramenta.
 - O token de uma conta vinculada (não-primária) é a única coisa que este
   servidor persiste, e sempre fica guardado criptografado (AES-256-GCM) —
   nunca em texto puro.
+- Eventos de autenticação e de limite de requisições são gravados nos logs
+  do servidor pra auditoria, sem nenhum token — veja o
+  [`SECURITY.pt-br.md`](./SECURITY.pt-br.md#logs-de-auditoria).
 
 Política de segurança completa, modelo de ameaça e como reportar uma
 vulnerabilidade: [`SECURITY.pt-br.md`](./SECURITY.pt-br.md).
@@ -146,6 +155,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
 - [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
+- [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
 
 ## Licença
 

@@ -117,10 +117,16 @@ server answers `429 Too Many Requests` with a `Retry-After` header.
 | `/link-account`, `/link-callback`, `/callback` | 30 requests / 5 min | client IP |
 | `/mcp` (OAuth mode) | 60 requests / min (bursts allowed) | hash of the bearer token |
 | `/mcp` (legacy mode) | 60 requests / min (bursts allowed) | client IP |
-| `/mcp`, invalid tokens | 20 failed verifications / 5 min | client IP |
+| `/mcp`, invalid tokens | 20 rejected tokens / 5 min | client IP |
 
 Normal use stays far below these limits. If Redis is unreachable, requests
 are allowed (fail-open) so an outage never blocks login or tool calls.
+
+If GitHub itself can't verify your token for a moment (5xx, rate limit,
+network error), `/mcp` answers `503` with `Retry-After` instead of `401`, so
+Claude retries and you are not asked to reconnect. Only a token GitHub
+actually rejects counts as invalid (see
+[ADR 0004](./docs/adr/0004-transient-github-errors-503.md)).
 
 ## Security
 
@@ -132,6 +138,9 @@ are allowed (fail-open) so an outage never blocks login or tool calls.
 - A linked (non-primary) account's token is the only thing this server
   persists at all, and it's always stored encrypted (AES-256-GCM) — never
   in plaintext.
+- Authentication and rate-limit events are written to the server logs for
+  auditing, without any token — see
+  [`SECURITY.md`](./SECURITY.md#audit-logging).
 
 Full security policy, threat model, and how to report a vulnerability:
 [`SECURITY.md`](./SECURITY.md).
@@ -143,6 +152,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0001 — Git Data API for large commits](./docs/adr/0001-git-data-api-for-large-commits.md)
 - [0002 — Multi-account OAuth linking](./docs/adr/0002-multi-account-oauth-linking.md)
 - [0003 — Redis-backed rate limiting](./docs/adr/0003-redis-rate-limiting.md)
+- [0004 — Transient GitHub errors answered with 503, not 401](./docs/adr/0004-transient-github-errors-503.md)
 
 ## License
 
