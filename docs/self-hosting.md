@@ -196,3 +196,4 @@ comments, grouped by mode.
 - [0006 — Pick the linked account by write access](./adr/0006-account-selection-by-write-access.md)
 - [0007 — Never pick an account while a linked one is revoked](./adr/0007-revoked-linked-accounts.md)
 - [0008 — Reject unknown tool arguments; `branch` in the read tools](./adr/0008-strict-tool-arguments.md)
+- [0009 — `update_pr` scope: edit, retarget, close/reopen](./adr/0009-update-pr-scope.md)

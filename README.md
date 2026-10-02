@@ -3,8 +3,8 @@
 *[Leia em português](./README.pt-br.md)*
 
 An MCP server that gives Claude real access to GitHub: create branches, commit,
-open/comment on PRs, list, create, read and comment on issues, read files, and
-search code.
+open, edit and comment on PRs, list, create, read and comment on issues, read
+files, and search code.
 
 ## Connect to this instance
 
@@ -38,6 +38,7 @@ target. See [Available tools](#available-tools) below.
 - `patch_file` — applies a unified diff to an existing file on a branch, without resending the whole content
 - `get_branch_head` — reads the full (40-character) SHA of the commit a branch points to
 - `open_pr` — opens a Pull Request
+- `update_pr` — edits a PR's title, description or target branch, and closes or reopens it (never merges)
 - `list_prs` — lists PRs
 - `comment_pr` — comments on a PR
 - `list_issues` — lists issues (board tasks)
@@ -173,6 +174,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
 - [0007 — Never pick an account while a linked one is revoked](./docs/adr/0007-revoked-linked-accounts.md)
 - [0008 — Reject unknown tool arguments; `branch` in the read tools](./docs/adr/0008-strict-tool-arguments.md)
+- [0009 — `update_pr` scope: edit, retarget, close/reopen](./docs/adr/0009-update-pr-scope.md)
 
 ## License
 
