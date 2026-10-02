@@ -44,7 +44,7 @@ target. See [Available tools](#available-tools) below.
 - `get_issue` — reads an issue in full: description and every comment, in order
 - `create_issue` — creates an issue
 - `comment_issue` — comments on an issue (e.g. final QA report)
-- `read_file` — reads a file's content
+- `read_file` — reads a file's content on a branch (`branch`, or `ref` for a branch, tag or commit; default `main`)
 - `search_code` — searches code in the repository
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
@@ -69,7 +69,7 @@ commit. Each file entry also accepts `patch` — the same unified-diff
 mechanism as `patch_file`, but inside a multi-file commit:
 
 - `create_blob` — creates a blob (raw content) and returns its SHA
-- `get_tree` — reads a tree (lists files and blob SHAs of a commit/branch), useful for finding an already-existing blob's SHA and reusing it
+- `get_tree` — reads a tree (lists files and blob SHAs of a commit/branch; select it with `branch` or `tree_sha`, default `main`), useful for finding an already-existing blob's SHA and reusing it
 - `get_branch_head` — reads a branch's current full commit SHA, required as `parents` for `create_commit` (GitHub requires the full SHA, not the abbreviated one `commit_file`/`patch_file`/`commit_tree` print in their response)
 - `create_tree` — builds a new tree from a base tree, applying entries that bring `content` (new blob), `patch` (unified diff over the path's current content in the base tree), or `sha` (reused blob, or `null` to remove the path)
 - `create_commit` — creates a commit from a tree and parent commit(s) (`parents` requires the full SHA — use `get_branch_head` to get it)
@@ -83,6 +83,10 @@ with `create_commit` without an extra call to `get_branch_head`.
 All tools accept an optional `owner`/`repo`. If you don't provide `owner`,
 the server tries to use your own GitHub user as the default (but `repo`
 still needs to be given).
+
+Tools reject arguments they don't know: a misspelled or unsupported argument
+returns an error naming it, instead of being silently ignored (see
+[ADR 0008](./docs/adr/0008-strict-tool-arguments.md)).
 
 ## Linking multiple accounts to the same session
 
@@ -168,6 +172,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
 - [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
 - [0007 — Never pick an account while a linked one is revoked](./docs/adr/0007-revoked-linked-accounts.md)
+- [0008 — Reject unknown tool arguments; `branch` in the read tools](./docs/adr/0008-strict-tool-arguments.md)
 
 ## License
 

@@ -45,7 +45,7 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `get_issue` — lê uma issue completa: descrição e todos os comentários, em ordem
 - `create_issue` — cria uma issue
 - `comment_issue` — comenta numa issue (ex: relatório final de QA)
-- `read_file` — lê o conteúdo de um arquivo
+- `read_file` — lê o conteúdo de um arquivo numa branch (`branch`, ou `ref` pra branch, tag ou commit; padrão `main`)
 - `search_code` — busca código no repositório
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
@@ -71,7 +71,7 @@ mesmo mecanismo de diff unificado do `patch_file`, mas dentro de um commit
 multi-arquivo:
 
 - `create_blob` — cria um blob (conteúdo bruto) e devolve o SHA
-- `get_tree` — lê uma tree (lista arquivos e SHAs de blob de um commit/branch), útil pra descobrir o SHA de um blob já existente e reaproveitá-lo
+- `get_tree` — lê uma tree (lista arquivos e SHAs de blob de um commit/branch; escolha com `branch` ou `tree_sha`, padrão `main`), útil pra descobrir o SHA de um blob já existente e reaproveitá-lo
 - `get_branch_head` — lê o SHA completo do commit atual de uma branch, necessário como `parents` de `create_commit` (o GitHub exige o SHA completo, não o abreviado que `commit_file`/`patch_file`/`commit_tree` imprimem na resposta)
 - `create_tree` — monta uma nova tree a partir de uma tree base, aplicando entradas que trazem `content` (blob novo), `patch` (diff unificado sobre o conteúdo atual do caminho na tree base) ou `sha` (blob reaproveitado, ou `null` pra remover o caminho)
 - `create_commit` — cria um commit a partir de uma tree e commit(s)-pai (`parents` exige SHA completo — use `get_branch_head` pra obtê-lo)
@@ -85,6 +85,11 @@ precisar de uma chamada extra a `get_branch_head`.
 Todas as ferramentas aceitam `owner`/`repo` opcionais. Se você não informar
 `owner`, o servidor tenta usar o seu próprio usuário do GitHub como padrão
 (mas o `repo` ainda precisa ser informado).
+
+As ferramentas recusam argumentos que não conhecem: um argumento com nome
+errado ou não suportado volta como erro dizendo qual é, em vez de ser
+ignorado em silêncio (veja a
+[ADR 0008](./docs/adr/0008-strict-tool-arguments.md)).
 
 ## Vinculando várias contas à mesma sessão
 
@@ -172,6 +177,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./docs/adr/0005-migrate-to-mcp-handler-2.md)
 - [0006 — Pick the linked account by write access](./docs/adr/0006-account-selection-by-write-access.md)
 - [0007 — Never pick an account while a linked one is revoked](./docs/adr/0007-revoked-linked-accounts.md)
+- [0008 — Reject unknown tool arguments; `branch` in the read tools](./docs/adr/0008-strict-tool-arguments.md)
 
 ## Licença
 

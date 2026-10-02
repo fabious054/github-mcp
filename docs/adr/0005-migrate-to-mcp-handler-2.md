@@ -3,6 +3,10 @@
 ## Status
 Accepted (2026-10-01). Implemented in issue #43.
 
+Amended by [ADR 0008](./0008-strict-tool-arguments.md) (2026-10-01): tool
+input schemas are `z.strictObject`, so unknown arguments are rejected instead
+of silently dropped.
+
 ## Context
 
 Dependabot proposed `mcp-handler` 1.1 → 2.2 (#29). Unlike the other major
