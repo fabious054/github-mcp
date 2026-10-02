@@ -6,6 +6,7 @@ import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
 import { getLinkedAccounts } from "../../lib/accounts";
 import { accessFromError, accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
+import { pickRef } from "../../lib/ref-pick";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -297,7 +298,7 @@ const rawHandler = createMcpHandler(
       "create_branch",
       {
         description: "Creates a new branch from an existing one (default: main).",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           branch_name: z.string().describe("New branch name, e.g. fix/146-description"),
           from_branch: z.string().default("main").describe("Base branch to create the new one from"),
@@ -327,7 +328,7 @@ const rawHandler = createMcpHandler(
       "get_branch_head",
       {
         description: "Reads the full (40-character) SHA of the commit a branch currently points to. Use this to get the input SHA for 'parents' in 'create_commit', since other tools (commit_file, patch_file, commit_tree) only print an abbreviated SHA in their response text.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           branch: z.string().describe("Branch name, e.g. main"),
         }),
@@ -345,7 +346,7 @@ const rawHandler = createMcpHandler(
       "commit_file",
       {
         description: "Creates or updates a file directly on a branch, with a commit message (conventional commits).",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           branch: z.string().describe("Branch where the commit will be made"),
           path: z.string().describe("File path in the repository, e.g. src/handlers/foo.js"),
@@ -392,7 +393,7 @@ const rawHandler = createMcpHandler(
       "patch_file",
       {
         description: "Applies a unified diff ('diff -u' or 'git diff' format) to an existing file on a branch, without needing to resend the whole content — ideal for editing a small chunk inside a large file. Fetches the file's current content on the branch, applies the patch, and commits only the result.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           branch: z.string().describe("Branch where the commit will be made"),
           path: z.string().describe("Path of the file to patch, e.g. src/handlers/foo.js"),
@@ -454,7 +455,7 @@ const rawHandler = createMcpHandler(
       "create_blob",
       {
         description: "Creates a blob (a raw Git content object) and returns its SHA. Use this to create a file's content before referencing it in a tree (via 'create_tree' or 'commit_tree'), or to get the SHA of specific content.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           content: z.string().describe("Blob content"),
           encoding: z
@@ -473,22 +474,24 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "get_tree",
       {
-        description: "Reads a tree (file tree) from Git — lists paths and blob SHAs of a commit/branch/tree. Use this to find the SHA of an already-existing blob (and thus reuse it without resending content) before building a new tree.",
-        inputSchema: z.object({
+        description: "Reads a tree (file tree) from Git — lists paths and blob SHAs of a commit/branch/tree. Use this to find the SHA of an already-existing blob (and thus reuse it without resending content) before building a new tree. Select what to read with 'branch' (same name as the write tools) or 'tree_sha' (a tree SHA or any branch/tag/commit); default: main.",
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
+          branch: z.string().optional().describe("Branch to read the tree from, e.g. feat/146-description. Same as passing it in 'tree_sha'."),
           tree_sha: z
             .string()
-            .default("main")
-            .describe("Tree SHA, or a branch/tag/commit — the associated tree is resolved automatically"),
+            .optional()
+            .describe("Tree SHA, or a branch/tag/commit — the associated tree is resolved automatically. Default: main."),
           recursive: z.boolean().default(false).describe("If true, recursively lists all subfolders"),
         }),
       },
-      async ({ account, owner, repo, tree_sha, recursive }, ctx) => {
+      async ({ account, owner, repo, branch, tree_sha, recursive }, ctx) => {
+        const target = pickRef("get_tree", "tree_sha", tree_sha, branch);
         const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
         const tree = await octokit.git.getTree({
           owner: o,
           repo: r,
-          tree_sha,
+          tree_sha: target,
           recursive: recursive ? "true" : undefined,
         });
         const lines = tree.data.tree.map(
@@ -498,7 +501,7 @@ const rawHandler = createMcpHandler(
       }
     );
 
-    const treeEntryShape = z.object({
+    const treeEntryShape = z.strictObject({
       path: z.string().describe("File path, e.g. src/handlers/foo.js"),
       mode: z
         .enum(["100644", "100755", "040000", "160000", "120000"])
@@ -587,7 +590,7 @@ const rawHandler = createMcpHandler(
       "create_tree",
       {
         description: "Builds a new tree from a base tree, applying the given entries. Each entry can bring 'content' (creates a new blob), 'patch' (applies a unified diff over the path's current content in the base tree — to edit a small chunk without resending the whole file), or 'sha' (reuses an already-existing blob, without resending content). 'sha: null' removes the path from the tree.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           base_tree: z
             .string()
@@ -612,7 +615,7 @@ const rawHandler = createMcpHandler(
       "create_commit",
       {
         description: "Creates a commit object pointing to a tree and one or more parent commits. Doesn't move any branch on its own — use 'update_ref' afterwards to point a branch to the new commit. 'parents' requires the full (40-character) SHA — use 'get_branch_head' to get a branch's current full commit SHA.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           tree: z.string().describe("SHA of this commit's tree (from 'create_tree')"),
           parents: z.array(z.string()).min(1).describe("Full SHA(s) of the parent commit(s) — normally the branch's current commit, obtained via 'get_branch_head'"),
@@ -630,7 +633,7 @@ const rawHandler = createMcpHandler(
       "update_ref",
       {
         description: "Points a branch to a specific commit. By default refuses to move the branch if it's not a fast-forward (avoids overwriting concurrent work) — use 'force: true' only when you're sure.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           branch: z.string().describe("Branch to move, e.g. feat/146-description"),
           sha: z.string().describe("SHA of the commit the branch should point to"),
@@ -648,7 +651,7 @@ const rawHandler = createMcpHandler(
       "commit_tree",
       {
         description: "Creates a single atomic commit with several files at once, orchestrating blob → tree → commit → update_ref in one call. Each file can bring 'content' (creates a new blob), 'patch' (applies a unified diff over the file's current content on the branch — to edit a small chunk without resending the whole file), 'sha' (reuses an already-existing blob — for a file that didn't change between commits, without resending any content), or 'sha: null' (removes the file). Ideal for large or multi-file changes, where 'commit_file' would require one call per file with the full content every time.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           branch: z.string().describe("Branch where the commit will be made"),
           message: z.string().describe("Commit message following conventional commits (feat:, fix:, chore:, etc.)"),
@@ -691,7 +694,7 @@ const rawHandler = createMcpHandler(
       "open_pr",
       {
         description: "Opens a Pull Request from one branch into another.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           head: z.string().describe("Source branch (with the changes)"),
           base: z.string().default("main").describe("Target branch"),
@@ -710,7 +713,7 @@ const rawHandler = createMcpHandler(
       "list_prs",
       {
         description: "Lists the repository's Pull Requests.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           state: z.enum(["open", "closed", "all"]).default("open"),
         }),
@@ -727,7 +730,7 @@ const rawHandler = createMcpHandler(
       "comment_pr",
       {
         description: "Comments on an existing Pull Request.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           pr_number: z.number().int().describe("PR number"),
           body: z.string().describe("Comment text"),
@@ -746,7 +749,7 @@ const rawHandler = createMcpHandler(
       "list_issues",
       {
         description: "Lists the repository's issues (can represent the board's tasks).",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           state: z.enum(["open", "closed", "all"]).default("open"),
         }),
@@ -765,7 +768,7 @@ const rawHandler = createMcpHandler(
       "get_issue",
       {
         description: "Brings back an issue's full content: description and every comment, in the order they were posted — to understand the history and reasoning behind it, not just the title.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           issue_number: z.number().int().describe("Issue/task number"),
         }),
@@ -802,7 +805,7 @@ const rawHandler = createMcpHandler(
       "create_issue",
       {
         description: "Creates a new issue in the repository.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           title: z.string(),
           body: z.string().optional(),
@@ -819,7 +822,7 @@ const rawHandler = createMcpHandler(
       "comment_issue",
       {
         description: "Comments on an existing issue — use it to post the final QA report on the original board task.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           issue_number: z.number().int().describe("Issue/task number"),
           body: z.string().describe("Comment text (e.g. QA report)"),
@@ -839,16 +842,18 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "read_file",
       {
-        description: "Reads a repository file's content on a specific branch/ref.",
-        inputSchema: z.object({
+        description: "Reads a repository file's content on a specific branch or ref. Select it with 'branch' (same name as the write tools) or 'ref' (a branch, tag or commit SHA); default: main.",
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           path: z.string(),
-          ref: z.string().default("main").describe("Branch, tag or commit SHA"),
+          branch: z.string().optional().describe("Branch to read from, e.g. feat/146-description. Same as passing it in 'ref'."),
+          ref: z.string().optional().describe("Branch, tag or commit SHA. Default: main."),
         }),
       },
-      async ({ account, owner, repo, path, ref }, ctx) => {
+      async ({ account, owner, repo, path, branch, ref }, ctx) => {
+        const target = pickRef("read_file", "ref", ref, branch);
         const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
-        const res = await octokit.repos.getContent({ owner: o, repo: r, path, ref });
+        const res = await octokit.repos.getContent({ owner: o, repo: r, path, ref: target });
         if (Array.isArray(res.data) || !("content" in res.data)) {
           return { content: [{ type: "text", text: `'${path}' is a directory, not a file.` }] };
         }
@@ -861,7 +866,7 @@ const rawHandler = createMcpHandler(
       "search_code",
       {
         description: "Searches for code inside the repository.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           ...ownerRepoShape,
           query: z.string().describe("Search term (GitHub code search syntax)"),
         }),
@@ -880,7 +885,7 @@ const rawHandler = createMcpHandler(
       "whoami",
       {
         description: "Shows which GitHub identity/account is being used in this session.",
-        inputSchema: z.object({}),
+        inputSchema: z.strictObject({}),
       },
       async (_args, ctx) => {
         const authInfo = ctx.http?.authInfo;
@@ -915,7 +920,7 @@ const rawHandler = createMcpHandler(
       "link_account",
       {
         description: "Generates a one-time authorization link to link an ADDITIONAL GitHub account to your current session (multi-account support). Open the returned URL in a browser and approve — once linked, that account's repositories are picked up automatically (by per-repo detection), with no need to call this tool for it again. Only works in OAuth mode (authenticated with a primary account).",
-        inputSchema: z.object({}),
+        inputSchema: z.strictObject({}),
       },
       async (_args, ctx) => {
         const authInfo = ctx.http?.authInfo;
@@ -944,7 +949,7 @@ const rawHandler = createMcpHandler(
       "list_accounts",
       {
         description: "Lists the GitHub accounts linked to your current session: the primary account (authenticated via OAuth) and any additional account linked with 'link_account', with the status of each linked account's authorization (ok, revoked — re-link needed, or could not be checked right now). Use it to check which accounts are available for automatic repository detection.",
-        inputSchema: z.object({}),
+        inputSchema: z.strictObject({}),
       },
       async (_args, ctx) => {
         const authInfo = ctx.http?.authInfo;
@@ -988,7 +993,7 @@ const rawHandler = createMcpHandler(
       "list_repos_by_account",
       {
         description: "Lists the repositories accessible by an account linked to your session — the primary one, or an additional one linked with 'link_account'. Useful for checking what each account can see before a call, or for picking the right 'account' when 'resolveRepo' asks because of ambiguity.",
-        inputSchema: z.object({
+        inputSchema: z.strictObject({
           account: z
             .string()
             .optional()

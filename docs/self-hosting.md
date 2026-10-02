@@ -164,7 +164,7 @@ server.registerTool(
   "tool_name",
   {
     description: "What the tool does.",
-    inputSchema: z.object({ ...ownerRepoShape, path: z.string() }),
+    inputSchema: z.strictObject({ ...ownerRepoShape, path: z.string() }),
   },
   async ({ account, owner, repo, path }, ctx) => {
     const { octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
@@ -176,6 +176,10 @@ server.registerTool(
 
 The variadic `server.tool(name, description, shape, cb)` form from 1.x no
 longer exists, and the session's auth is read from `ctx.http?.authInfo`.
+
+Always use `z.strictObject` (also for nested objects), so an unknown argument
+fails instead of being silently dropped (see
+[ADR 0008](./adr/0008-strict-tool-arguments.md)).
 
 ## Environment variables reference
 
@@ -191,3 +195,4 @@ comments, grouped by mode.
 - [0005 — Migrate to mcp-handler 2 (MCP SDK v2)](./adr/0005-migrate-to-mcp-handler-2.md)
 - [0006 — Pick the linked account by write access](./adr/0006-account-selection-by-write-access.md)
 - [0007 — Never pick an account while a linked one is revoked](./adr/0007-revoked-linked-accounts.md)
+- [0008 — Reject unknown tool arguments; `branch` in the read tools](./adr/0008-strict-tool-arguments.md)
