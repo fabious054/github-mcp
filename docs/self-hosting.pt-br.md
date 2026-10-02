@@ -206,3 +206,4 @@ agrupada por modo.
 - [0007 — Never pick an account while a linked one is revoked](./adr/0007-revoked-linked-accounts.md)
 - [0008 — Reject unknown tool arguments; `branch` in the read tools](./adr/0008-strict-tool-arguments.md)
 - [0009 — `update_pr` scope: edit, retarget, close/reopen](./adr/0009-update-pr-scope.md)
+- [0010 — `delete_branch` guards: default, protected, open PRs](./adr/0010-delete-branch-guards.md)
