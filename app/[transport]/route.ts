@@ -7,6 +7,7 @@ import { getServerOrigin } from "../../lib/mongo";
 import { getLinkedAccounts } from "../../lib/accounts";
 import { accessFromError, accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
 import { pickRef } from "../../lib/ref-pick";
+import { deleteBranchRefusal, type OpenPr } from "../../lib/branch-delete";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -318,6 +319,62 @@ const rawHandler = createMcpHandler(
             {
               type: "text",
               text: `Branch '${branch_name}' created from '${from_branch}' in ${o}/${r} (full SHA: ${base.data.object.sha}).`,
+            },
+          ],
+        };
+      }
+    );
+
+    server.registerTool(
+      "delete_branch",
+      {
+        description: "Deletes a branch. Refuses — without deleting anything — if it is the repository's default branch, a protected branch, or the head or base of an open pull request (close or merge the PR first). Unmerged commits do not block deletion; the response gives the branch's last commit SHA so it can be recreated if needed.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          branch: z.string().describe("Branch to delete, e.g. feat/146-description"),
+        }),
+      },
+      async ({ account, owner, repo, branch }, ctx) => {
+        const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const repoInfo = await octokit.repos.get({ owner: o, repo: r });
+
+        let info;
+        try {
+          info = await octokit.repos.getBranch({ owner: o, repo: r, branch });
+        } catch (err) {
+          if ((err as { status?: number }).status === 404) {
+            throw new Error(`Branch '${branch}' does not exist in ${o}/${r}.`);
+          }
+          throw err;
+        }
+
+        const [asHead, asBase] = await Promise.all([
+          octokit.pulls.list({ owner: o, repo: r, state: "open", head: `${o}:${branch}`, per_page: 100 }),
+          octokit.pulls.list({ owner: o, repo: r, state: "open", base: branch, per_page: 100 }),
+        ]);
+        const seen = new Set<number>();
+        const openPrs: OpenPr[] = [];
+        for (const pr of [...asHead.data, ...asBase.data]) {
+          if (seen.has(pr.number)) continue;
+          seen.add(pr.number);
+          openPrs.push({ number: pr.number, head: pr.head.ref, base: pr.base.ref });
+        }
+
+        const refusal = deleteBranchRefusal({
+          branch,
+          defaultBranch: repoInfo.data.default_branch,
+          isProtected: info.data.protected,
+          openPrs,
+        });
+        if (refusal) throw new Error(refusal);
+
+        const lastSha = info.data.commit.sha;
+        await octokit.git.deleteRef({ owner: o, repo: r, ref: `heads/${branch}` });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Branch '${branch}' deleted from ${o}/${r}. Its last commit was ${lastSha} — create a branch from that commit to restore it if needed.`,
             },
           ],
         };
