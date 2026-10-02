@@ -6,7 +6,7 @@ const FEATURES = [
   {
     icon: "◆",
     title: "Branches & commits",
-    desc: "Create branches, commit full files, or apply a unified diff to patch just a slice of one.",
+    desc: "Create and delete branches, commit full files, or apply a unified diff to patch just a slice of one.",
   },
   {
     icon: "▤",
@@ -131,7 +131,7 @@ export default function Home() {
         <section id="features">
           <h2>What it can do</h2>
           <p className="section-lead">
-            Twenty-four tools covering the day-to-day GitHub workflow,
+            Twenty-five tools covering the day-to-day GitHub workflow,
             including three built specifically for working across more
             than one account.
           </p>

@@ -2,9 +2,9 @@
 
 *[Leia em português](./README.pt-br.md)*
 
-An MCP server that gives Claude real access to GitHub: create branches, commit,
-open, edit and comment on PRs, list, create, read and comment on issues, read
-files, and search code.
+An MCP server that gives Claude real access to GitHub: create and delete
+branches, commit, open, edit and comment on PRs, list, create, read and comment
+on issues, read files, and search code.
 
 ## Connect to this instance
 
@@ -34,6 +34,7 @@ target. See [Available tools](#available-tools) below.
 ## Available tools
 
 - `create_branch` — creates a branch from another one
+- `delete_branch` — deletes a branch; refuses the default branch, protected branches and branches with an open PR
 - `commit_file` — creates/updates a file with a commit message (full content, one file per call)
 - `patch_file` — applies a unified diff to an existing file on a branch, without resending the whole content
 - `get_branch_head` — reads the full (40-character) SHA of the commit a branch points to
@@ -175,6 +176,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0007 — Never pick an account while a linked one is revoked](./docs/adr/0007-revoked-linked-accounts.md)
 - [0008 — Reject unknown tool arguments; `branch` in the read tools](./docs/adr/0008-strict-tool-arguments.md)
 - [0009 — `update_pr` scope: edit, retarget, close/reopen](./docs/adr/0009-update-pr-scope.md)
+- [0010 — `delete_branch` guards: default, protected, open PRs](./docs/adr/0010-delete-branch-guards.md)
 
 ## License
 
