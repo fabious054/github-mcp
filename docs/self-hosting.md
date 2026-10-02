@@ -198,3 +198,4 @@ comments, grouped by mode.
 - [0008 — Reject unknown tool arguments; `branch` in the read tools](./adr/0008-strict-tool-arguments.md)
 - [0009 — `update_pr` scope: edit, retarget, close/reopen](./adr/0009-update-pr-scope.md)
 - [0010 — `delete_branch` guards: default, protected, open PRs](./adr/0010-delete-branch-guards.md)
+- [0011 — Stateless refresh tokens so Claude renews silently](./adr/0011-stateless-refresh-tokens.md)

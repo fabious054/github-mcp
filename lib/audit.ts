@@ -14,6 +14,9 @@ export type AuditEvent =
   | "mcp.auth.transient"
   | "ratelimit.blocked"
   | "oauth.token.issued"
+  | "oauth.token.refreshed"
+  | "oauth.token.refresh_rejected"
+  | "oauth.token.refresh_transient"
   | "oauth.link.completed"
   | "oauth.link.failed"
   | "oauth.link.token_revoked";
@@ -24,6 +27,8 @@ const WARN_EVENTS: ReadonlySet<AuditEvent> = new Set([
   "mcp.auth.rejected",
   "mcp.auth.transient",
   "ratelimit.blocked",
+  "oauth.token.refresh_rejected",
+  "oauth.token.refresh_transient",
   "oauth.link.failed",
   "oauth.link.token_revoked",
 ]);

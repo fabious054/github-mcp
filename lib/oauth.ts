@@ -61,6 +61,82 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+// ---------------------------------------------------------------------------
+// Token lifetimes (see docs/adr/0011-stateless-refresh-tokens.md).
+//
+// The access token handed to the MCP client IS the user's GitHub OAuth App
+// token, which GitHub never expires. Without an `expires_in` and a
+// `refresh_token`, clients apply their own lifetime and then have no way to
+// renew except sending the user through the whole OAuth flow again. So the
+// token response advertises a lifetime and a refresh token, and the client
+// renews silently.
+// ---------------------------------------------------------------------------
+
+// How long the client should treat an access token as valid before
+// refreshing it. Every refresh re-checks the GitHub token with GitHub.
+export const ACCESS_TOKEN_TTL_SECONDS = 8 * 60 * 60;
+
+// Refresh token: an encrypted blob, like every other OAuth artifact here.
+// It never expires on its own; it stops working only when GitHub stops
+// accepting the token inside it (checked on every refresh). `typ` keeps it
+// from being confused with the other blobs encrypted with the same key
+// (client_id, state, authorization code).
+export type McpRefreshToken = {
+  typ: "refresh";
+  githubToken: string;
+  githubScope?: string;
+  githubLogin?: string;
+  mcpClientId: string;
+  iat: number;
+};
+
+export function issueRefreshToken(fields: Omit<McpRefreshToken, "typ" | "iat">): string {
+  return encryptJson({ typ: "refresh", ...fields, iat: nowSeconds() } satisfies McpRefreshToken);
+}
+
+// Returns the decoded refresh token, or undefined when the blob is not a
+// valid refresh token issued by this server (garbage, tampered, another key,
+// or another kind of blob).
+export function readRefreshToken(blob: string | null | undefined): McpRefreshToken | undefined {
+  if (!blob) return undefined;
+  let decoded: Partial<McpRefreshToken>;
+  try {
+    decoded = decryptJson<Partial<McpRefreshToken>>(blob);
+  } catch {
+    return undefined;
+  }
+  if (
+    !decoded ||
+    decoded.typ !== "refresh" ||
+    typeof decoded.githubToken !== "string" ||
+    !decoded.githubToken ||
+    typeof decoded.mcpClientId !== "string" ||
+    !decoded.mcpClientId
+  ) {
+    return undefined;
+  }
+  return decoded as McpRefreshToken;
+}
+
+// Successful token response (RFC 6749 section 5.1), shared by both grants.
+export function tokenResponse(fields: {
+  githubToken: string;
+  githubScope?: string;
+  githubLogin?: string;
+  mcpClientId: string;
+}): Response {
+  return jsonResponse(
+    {
+      access_token: fields.githubToken,
+      token_type: "bearer",
+      expires_in: ACCESS_TOKEN_TTL_SECONDS,
+      refresh_token: issueRefreshToken(fields),
+      scope: fields.githubScope || "",
+    },
+    { headers: { "Cache-Control": "no-store", Pragma: "no-cache" } }
+  );
+}
+
 export function sha256Base64Url(input: string): string {
   return crypto.createHash("sha256").update(input).digest("base64url");
 }

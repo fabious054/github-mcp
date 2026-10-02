@@ -13,6 +13,12 @@ before making the repository public, and how to report a vulnerability.
 - The server never stores the primary account's token. It is forwarded from
   GitHub to Claude on each exchange and revalidated against the GitHub API
   on every tool call — nothing is written to disk or to a database.
+- Claude also receives a **refresh token** so it can renew its 8-hour token
+  lifetime without a new login. It is an encrypted blob (AES-256-GCM) that
+  contains the GitHub token and is held only by Claude; it never expires on
+  its own and stops working as soon as the authorization is revoked on
+  GitHub, which is checked on every renewal. Treat it like the GitHub token
+  itself. See [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md).
 - The only thing this server persists at all is a **linked (non-primary)
   account's** token (the `link_account` feature), and it is always stored
   encrypted (AES-256-GCM), never in plaintext. See
@@ -43,6 +49,9 @@ JSON line each (search for `"audit":` in the Vercel logs):
 | `mcp.auth.transient` | GitHub could not verify the token right now — 5xx, rate limit, network error or timeout (answered with 503 + `Retry-After`; the session is kept) |
 | `ratelimit.blocked` | A request was answered with 429, with the route and which limit tripped |
 | `oauth.token.issued` | An OAuth login finished and Claude received its token |
+| `oauth.token.refreshed` | Claude renewed its token with a refresh token |
+| `oauth.token.refresh_rejected` | A renewal failed because GitHub no longer accepts the token (revoked); the user must log in again |
+| `oauth.token.refresh_transient` | GitHub could not verify the token during a renewal (answered with 503 + `Retry-After`; the refresh token stays valid) |
 | `oauth.link.completed` / `oauth.link.failed` | A `link_account` flow finished or failed |
 | `oauth.link.token_revoked` | GitHub rejected a linked account's stored token (revoked or expired), with where it was detected; the account must be re-linked (see [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)) |
 
