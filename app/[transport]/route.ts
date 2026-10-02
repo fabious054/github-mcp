@@ -727,6 +727,40 @@ const rawHandler = createMcpHandler(
     );
 
     server.registerTool(
+      "update_pr",
+      {
+        description: "Updates an existing Pull Request: its title, its description (replaced as a whole), its target branch, and/or its state (close or reopen). Pass only the fields to change; at least one is required. Does not merge.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          pr_number: z.number().int().describe("PR number"),
+          title: z.string().optional().describe("New PR title"),
+          body: z.string().optional().describe("New PR description — replaces the current one entirely"),
+          base: z.string().optional().describe("New target branch, e.g. main"),
+          state: z.enum(["open", "closed"]).optional().describe("'closed' closes the PR without merging; 'open' reopens it"),
+        }),
+      },
+      async ({ account, owner, repo, pr_number, title, body, base, state }, ctx) => {
+        const changes = { title, body, base, state };
+        const changed = Object.entries(changes)
+          .filter(([, v]) => v !== undefined)
+          .map(([k]) => k);
+        if (changed.length === 0) {
+          throw new Error("update_pr needs at least one field to change: 'title', 'body', 'base' or 'state'.");
+        }
+        const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const pr = await octokit.pulls.update({ owner: o, repo: r, pull_number: pr_number, ...changes });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `PR #${pr.data.number} updated (${changed.join(", ")}) — now ${pr.data.state}, ${pr.data.head.ref} → ${pr.data.base.ref}: ${pr.data.html_url}`,
+            },
+          ],
+        };
+      }
+    );
+
+    server.registerTool(
       "comment_pr",
       {
         description: "Comments on an existing Pull Request.",

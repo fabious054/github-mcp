@@ -16,7 +16,7 @@ const FEATURES = [
   {
     icon: "⇄",
     title: "Pull requests",
-    desc: "Open PRs, list them, and comment — the full review loop without leaving Claude.",
+    desc: "Open, edit, close or reopen PRs, list them, and comment — the full review loop without leaving Claude.",
   },
   {
     icon: "☰",
@@ -131,7 +131,7 @@ export default function Home() {
         <section id="features">
           <h2>What it can do</h2>
           <p className="section-lead">
-            Twenty-three tools covering the day-to-day GitHub workflow,
+            Twenty-four tools covering the day-to-day GitHub workflow,
             including three built specifically for working across more
             than one account.
           </p>
