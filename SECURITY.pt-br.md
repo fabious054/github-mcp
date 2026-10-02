@@ -14,6 +14,12 @@ vulnerabilidade.
 - O servidor nunca guarda o token da conta primária. Ele é repassado do
   GitHub pro Claude a cada troca, e revalidado contra a API do GitHub a
   cada chamada de ferramenta — nada é escrito em disco ou banco de dados.
+- O Claude também recebe um **refresh token** pra renovar a validade de 8
+  horas do token sem novo login. Ele é um blob criptografado (AES-256-GCM)
+  que contém o token do GitHub e fica só com o Claude; nunca expira sozinho
+  e para de funcionar assim que a autorização é revogada no GitHub, o que é
+  conferido a cada renovação. Trate-o como o próprio token do GitHub. Veja o
+  [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md).
 - A única coisa que este servidor persiste é o token de uma **conta
   vinculada (não-primária)** (funcionalidade `link_account`), e sempre fica
   guardado criptografado (AES-256-GCM), nunca em texto puro. Veja o
@@ -46,6 +52,9 @@ execução, um JSON por linha (busque por `"audit":` nos logs da Vercel):
 | `mcp.auth.transient` | O GitHub não conseguiu validar o token naquele momento — 5xx, limite de requisições, erro de rede ou timeout (resposta 503 + `Retry-After`; a sessão é mantida) |
 | `ratelimit.blocked` | Uma requisição recebeu 429, com a rota e qual limite estourou |
 | `oauth.token.issued` | Um login OAuth terminou e o Claude recebeu o token |
+| `oauth.token.refreshed` | O Claude renovou o token usando o refresh token |
+| `oauth.token.refresh_rejected` | Uma renovação falhou porque o GitHub não aceita mais o token (revogado); a pessoa precisa fazer login de novo |
+| `oauth.token.refresh_transient` | O GitHub não conseguiu validar o token durante uma renovação (resposta 503 + `Retry-After`; o refresh token continua válido) |
 | `oauth.link.completed` / `oauth.link.failed` | Um fluxo de `link_account` terminou ou falhou |
 | `oauth.link.token_revoked` | O GitHub recusou o token guardado de uma conta vinculada (revogado ou expirado), com o ponto em que isso foi detectado; a conta precisa ser vinculada de novo (veja a [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)) |
 

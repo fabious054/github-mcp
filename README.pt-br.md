@@ -135,6 +135,7 @@ servidor responde `429 Too Many Requests` com o header `Retry-After`.
 | Endpoint | Limite | Chave |
 |---|---|---|
 | `/register`, `/token`, `/authorize` | 20 requisições / 5 min | IP do cliente |
+| `/token`, renovação do token (`refresh_token`) | 30 renovações / 5 min | hash do token do GitHub |
 | `/link-account`, `/link-callback`, `/callback` | 30 requisições / 5 min | IP do cliente |
 | `/mcp` (modo OAuth) | 60 requisições / min (rajadas permitidas) | hash do bearer token |
 | `/mcp` (modo legado) | 60 requisições / min (rajadas permitidas) | IP do cliente |
@@ -149,6 +150,16 @@ limite de requisições, erro de rede), o `/mcp` responde `503` com
 `Retry-After` em vez de `401`, então o Claude tenta de novo e você não
 precisa reconectar. Só conta como token inválido o que o GitHub de fato
 recusa (veja o [ADR 0004](./docs/adr/0004-transient-github-errors-503.md)).
+
+## Conexão contínua
+
+O Claude renova o token sozinho: cada token vem com validade de 8 horas e um
+refresh token, e o Claude troca o refresh token por uma validade nova antes
+que ela acabe. Você só faz login de novo se revogar a autorização no GitHub
+(Settings → Applications). Cada renovação confere o token com o GitHub; se o
+GitHub estiver indisponível por um instante, a renovação é tentada de novo
+em vez de te desconectar (veja o
+[ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md)).
 
 ## Segurança
 

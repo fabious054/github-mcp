@@ -132,6 +132,7 @@ server answers `429 Too Many Requests` with a `Retry-After` header.
 | Endpoint | Limit | Keyed by |
 |---|---|---|
 | `/register`, `/token`, `/authorize` | 20 requests / 5 min | client IP |
+| `/token`, token renewal (`refresh_token`) | 30 renewals / 5 min | hash of the GitHub token |
 | `/link-account`, `/link-callback`, `/callback` | 30 requests / 5 min | client IP |
 | `/mcp` (OAuth mode) | 60 requests / min (bursts allowed) | hash of the bearer token |
 | `/mcp` (legacy mode) | 60 requests / min (bursts allowed) | client IP |
@@ -145,6 +146,16 @@ network error), `/mcp` answers `503` with `Retry-After` instead of `401`, so
 Claude retries and you are not asked to reconnect. Only a token GitHub
 actually rejects counts as invalid (see
 [ADR 0004](./docs/adr/0004-transient-github-errors-503.md)).
+
+## Staying connected
+
+Claude renews its token on its own: every token comes with an 8-hour
+lifetime and a refresh token, and Claude exchanges the refresh token for a
+fresh lifetime before it runs out. You only log in again if you revoke the
+authorization on GitHub (Settings → Applications). Each renewal re-checks the
+token with GitHub; if GitHub is briefly unavailable, the renewal is retried
+instead of logging you out (see
+[ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md)).
 
 ## Security
 

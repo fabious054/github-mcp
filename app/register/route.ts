@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       client_id_issued_at: issuedAt,
       redirect_uris: redirectUris,
       client_name: clientName,
-      grant_types: ["authorization_code"],
+      grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
     },
