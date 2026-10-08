@@ -52,6 +52,7 @@ target. See [Available tools](#available-tools) below.
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
 - `list_repos_by_account` — lists the repositories a specific linked account can access
+- `create_repo` — creates an empty repository for you or an organization; you always choose private or public (there is no tool to delete one)
 
 ### Editing a small chunk of a large file
 
@@ -188,6 +189,8 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0008 — Reject unknown tool arguments; `branch` in the read tools](./docs/adr/0008-strict-tool-arguments.md)
 - [0009 — `update_pr` scope: edit, retarget, close/reopen](./docs/adr/0009-update-pr-scope.md)
 - [0010 — `delete_branch` guards: default, protected, open PRs](./docs/adr/0010-delete-branch-guards.md)
+- [0011 — Stateless refresh tokens so Claude renews silently](./docs/adr/0011-stateless-refresh-tokens.md)
+- [0012 — `create_repo`: account by owner, empty, no default visibility](./docs/adr/0012-create-repo.md)
 
 ## License
 
