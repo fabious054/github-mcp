@@ -4,7 +4,8 @@ import { applyPatch } from "diff";
 import { z } from "zod";
 import { oauthEnabled, encryptJson, nowSeconds } from "../../lib/oauth";
 import { getServerOrigin } from "../../lib/mongo";
-import { getLinkedAccounts } from "../../lib/accounts";
+import { getLinkedAccounts, unlinkAccount } from "../../lib/accounts";
+import { revokeOAuthToken, unlinkLinkedAccount } from "../../lib/account-unlink";
 import { accessFromError, accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
 import { pickRef } from "../../lib/ref-pick";
 import { deleteBranchRefusal, type OpenPr } from "../../lib/branch-delete";
@@ -1072,7 +1073,7 @@ const rawHandler = createMcpHandler(
           if (check.kind === "ok") {
             status = "authorization ok";
           } else if (check.kind === "rejected") {
-            status = "authorization revoked, run link_account again to re-link it";
+            status = "authorization revoked, run link_account again to re-link it, or unlink_account to remove it";
             audit("oauth.link.token_revoked", {
               primaryLogin,
               linkedLogin: a.login,
@@ -1087,6 +1088,35 @@ const rawHandler = createMcpHandler(
           lines.push(`${a.login} — linked on ${a.linkedAt} — ${status}`);
         });
         return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "unlink_account",
+      {
+        description:
+          "Unlinks an ADDITIONAL GitHub account from your session (the opposite of 'link_account') and revokes that link's token on GitHub. Only accounts linked to your own primary account can be unlinked; the primary account itself cannot. Use it when you no longer use an account, or when a revoked linked account keeps blocking automatic account detection. Only works in OAuth mode.",
+        inputSchema: z.strictObject({
+          account: z.string().describe("Login of the linked account to unlink, as shown by 'list_accounts'."),
+        }),
+      },
+      async ({ account }, ctx) => {
+        const authInfo = ctx.http?.authInfo;
+        if (!authInfo) {
+          throw new Error(
+            "unlink_account only works in OAuth mode. In this server's mode, accounts are fixed in the GITHUB_ACCOUNTS environment variable — remove it there."
+          );
+        }
+        const primaryLogin = authInfo.extra?.githubLogin as string | undefined;
+        const result = await unlinkLinkedAccount(primaryLogin, account, {
+          getLinkedLogins: (p) => getLinkedAccounts(p),
+          deleteLink: (p, l) => unlinkAccount(p, l),
+          revoke: (token) =>
+            revokeOAuthToken(token, process.env.GITHUB_OAUTH_CLIENT_ID, process.env.GITHUB_OAUTH_CLIENT_SECRET),
+          audit: (fields) => audit("oauth.link.removed", fields),
+        });
+        if (!result.ok) throw new Error(result.text);
+        return { content: [{ type: "text", text: result.text }] };
       }
     );
 

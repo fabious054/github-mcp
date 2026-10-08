@@ -31,7 +31,7 @@ const FEATURES = [
   {
     icon: "⚭",
     title: "Multi-account linking",
-    desc: "Link more than one GitHub account to the same session — the server picks the one that can write to each repository, and asks you whenever it can't tell for sure.",
+    desc: "Link more than one GitHub account to the same session — the server picks the one that can write to each repository, and asks you whenever it can't tell for sure. Unlink an account when you stop using it.",
   },
 ];
 
@@ -131,8 +131,8 @@ export default function Home() {
         <section id="features">
           <h2>What it can do</h2>
           <p className="section-lead">
-            Twenty-six tools covering the day-to-day GitHub workflow,
-            including three built specifically for working across more
+            Twenty-seven tools covering the day-to-day GitHub workflow,
+            including four built specifically for working across more
             than one account.
           </p>
           <div className="features-grid">

@@ -51,6 +51,7 @@ target. See [Available tools](#available-tools) below.
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
+- `unlink_account` — removes an additional account from your session and revokes its token on GitHub (never your primary account)
 - `list_repos_by_account` — lists the repositories a specific linked account can access
 - `create_repo` — creates an empty repository for you or an organization; you always choose private or public (there is no tool to delete one)
 
@@ -124,6 +125,12 @@ account to re-link with `link_account`, and `list_accounts` marks it as
 revoked. You can still pass `account` explicitly in the meantime (see
 [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)).
 
+No longer using a linked account? `unlink_account` removes it from your
+session and revokes its token on GitHub. It only ever touches accounts
+linked to your own primary account — other people who linked the same
+GitHub account keep theirs (see
+[ADR 0013](./docs/adr/0013-unlink-account.md)).
+
 ## Rate limiting
 
 Every public endpoint is rate limited (Redis-backed, see
@@ -191,6 +198,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0010 — `delete_branch` guards: default, protected, open PRs](./docs/adr/0010-delete-branch-guards.md)
 - [0011 — Stateless refresh tokens so Claude renews silently](./docs/adr/0011-stateless-refresh-tokens.md)
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./docs/adr/0012-create-repo.md)
+- [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
 
 ## License
 

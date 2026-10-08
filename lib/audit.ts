@@ -18,6 +18,7 @@ export type AuditEvent =
   | "oauth.token.refresh_rejected"
   | "oauth.token.refresh_transient"
   | "oauth.link.completed"
+  | "oauth.link.removed"
   | "oauth.link.failed"
   | "oauth.link.token_revoked";
 

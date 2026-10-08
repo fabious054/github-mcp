@@ -23,6 +23,9 @@ before making the repository public, and how to report a vulnerability.
   account's** token (the `link_account` feature), and it is always stored
   encrypted (AES-256-GCM), never in plaintext. See
   [ADR 0002](./docs/adr/0002-multi-account-oauth-linking.md) for the design.
+  `unlink_account` deletes such a link and revokes its token on GitHub; a
+  caller can only remove links of their own primary account (see
+  [ADR 0013](./docs/adr/0013-unlink-account.md)).
 - `whoami` never returns a token, only the identity/session in use.
 - Every public endpoint is rate limited with a Redis-backed limiter to
   blunt abuse and brute-force attempts (see
@@ -53,6 +56,7 @@ JSON line each (search for `"audit":` in the Vercel logs):
 | `oauth.token.refresh_rejected` | A renewal failed because GitHub no longer accepts the token (revoked); the user must log in again |
 | `oauth.token.refresh_transient` | GitHub could not verify the token during a renewal (answered with 503 + `Retry-After`; the refresh token stays valid) |
 | `oauth.link.completed` / `oauth.link.failed` | A `link_account` flow finished or failed |
+| `oauth.link.removed` | An account was unlinked with `unlink_account`, with the outcome of revoking its token on GitHub |
 | `oauth.link.token_revoked` | GitHub rejected a linked account's stored token (revoked or expired), with where it was detected; the account must be re-linked (see [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)) |
 
 Each line carries what is needed to diagnose it: the GitHub status code,

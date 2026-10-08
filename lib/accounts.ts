@@ -40,3 +40,12 @@ export async function getLinkedAccounts(primaryLogin: string): Promise<LinkedAcc
     return { login: d.login, token, linkedAt: d.linkedAt };
   });
 }
+
+// Removes one link of `primaryLogin` (the pair {primaryLogin, login}). Links
+// of other primary accounts — including other users who linked the same
+// GitHub account — are never touched. Returns whether a link was removed.
+export async function unlinkAccount(primaryLogin: string, login: string): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.collection<LinkedAccountDoc>(COLLECTION).deleteOne({ primaryLogin, login });
+  return res.deletedCount === 1;
+}
