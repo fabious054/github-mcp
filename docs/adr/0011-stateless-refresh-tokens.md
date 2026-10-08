@@ -2,8 +2,8 @@
 
 ## Status
 Accepted (2026-10-02). Implemented for issue #63.
-Amended (2026-10-08): the access token lifetime is now 30 days — see
-[ADR 0014](./0014-token-lifetime-30-days.md). Everything else here still
+Amended (2026-10-08): the access token lifetime is now 10 years — see
+[ADR 0014](./0014-long-token-lifetime.md). Everything else here still
 applies.
 
 ## Context

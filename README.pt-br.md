@@ -161,15 +161,15 @@ recusa (veja o [ADR 0004](./docs/adr/0004-transient-github-errors-503.md)).
 
 ## Conexão contínua
 
-A conexão continua de pé mesmo se você deixar o conector sem uso por dias:
-cada token vem com validade de 30 dias e um refresh token, e o Claude troca o
-refresh token por uma validade nova antes que ela acabe. Você só faz login de
+A conexão continua de pé por mais tempo que você deixe o conector sem uso:
+cada token é anunciado com validade de 10 anos (e um refresh token de
+reserva), então o Claude nunca considera ele vencido. Você só faz login de
 novo se revogar a autorização no GitHub (Settings → Applications) — e isso
 vale já na próxima chamada de ferramenta, porque toda chamada é conferida com
 o GitHub. Se o GitHub estiver indisponível por um instante durante uma
 renovação, ela é tentada de novo em vez de te desconectar (veja o
 [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md) e o
-[ADR 0014](./docs/adr/0014-token-lifetime-30-days.md)).
+[ADR 0014](./docs/adr/0014-long-token-lifetime.md)).
 
 ## Segurança
 
@@ -206,7 +206,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0011 — Stateless refresh tokens so Claude renews silently](./docs/adr/0011-stateless-refresh-tokens.md)
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./docs/adr/0012-create-repo.md)
 - [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
-- [0014 — Access token lifetime: 8 hours → 30 days](./docs/adr/0014-token-lifetime-30-days.md)
+- [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./docs/adr/0014-long-token-lifetime.md)
 
 ## Licença
 

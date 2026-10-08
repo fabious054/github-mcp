@@ -157,15 +157,15 @@ actually rejects counts as invalid (see
 
 ## Staying connected
 
-Your connection stays up even when you leave the connector unused for days:
-every token comes with a 30-day lifetime and a refresh token, and Claude
-exchanges the refresh token for a fresh lifetime before it runs out. You only
-log in again if you revoke the authorization on GitHub (Settings →
-Applications) — and that takes effect on your very next tool call, because
-every call is checked with GitHub. If GitHub is briefly unavailable during a
+Your connection stays up however long you leave the connector unused: every
+token is announced with a 10-year lifetime (plus a refresh token as a
+fallback), so Claude never considers it expired. You only log in again if you
+revoke the authorization on GitHub (Settings → Applications) — and that takes
+effect on your very next tool call, because every call is checked with
+GitHub. If GitHub is briefly unavailable during a
 renewal, it is retried instead of logging you out (see
 [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md) and
-[ADR 0014](./docs/adr/0014-token-lifetime-30-days.md)).
+[ADR 0014](./docs/adr/0014-long-token-lifetime.md)).
 
 ## Security
 
@@ -201,7 +201,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0011 — Stateless refresh tokens so Claude renews silently](./docs/adr/0011-stateless-refresh-tokens.md)
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./docs/adr/0012-create-repo.md)
 - [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
-- [0014 — Access token lifetime: 8 hours → 30 days](./docs/adr/0014-token-lifetime-30-days.md)
+- [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./docs/adr/0014-long-token-lifetime.md)
 
 ## License
 
