@@ -13,8 +13,10 @@ before making the repository public, and how to report a vulnerability.
 - The server never stores the primary account's token. It is forwarded from
   GitHub to Claude on each exchange and revalidated against the GitHub API
   on every tool call — nothing is written to disk or to a database.
-- Claude also receives a **refresh token** so it can renew its 8-hour token
-  lifetime without a new login. It is an encrypted blob (AES-256-GCM) that
+- Tokens are announced with a 10-year lifetime on purpose: every tool call is
+  checked with GitHub anyway, so a revoked authorization is refused at once
+  (see [ADR 0014](./docs/adr/0014-long-token-lifetime.md)). Claude also
+  receives a **refresh token** as a fallback. It is an encrypted blob (AES-256-GCM) that
   contains the GitHub token and is held only by Claude; it never expires on
   its own and stops working as soon as the authorization is revoked on
   GitHub, which is checked on every renewal. Treat it like the GitHub token

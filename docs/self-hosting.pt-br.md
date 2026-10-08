@@ -210,3 +210,4 @@ agrupada por modo.
 - [0011 — Stateless refresh tokens so Claude renews silently](./adr/0011-stateless-refresh-tokens.md)
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./adr/0012-create-repo.md)
 - [0013 — `unlink_account`: own links only, token revoked](./adr/0013-unlink-account.md)
+- [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./adr/0014-long-token-lifetime.md)

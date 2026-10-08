@@ -73,8 +73,13 @@ export function nowSeconds(): number {
 // ---------------------------------------------------------------------------
 
 // How long the client should treat an access token as valid before
-// refreshing it. Every refresh re-checks the GitHub token with GitHub.
-export const ACCESS_TOKEN_TTL_SECONDS = 8 * 60 * 60;
+// refreshing it: 10 years (ADR 0014) — in practice, never. The MCP client
+// keeps its own idea of when the token expires and, once that moment passes
+// while the connector is idle, drops the session instead of refreshing; the
+// server cannot push a new token to it. The lifetime adds no protection:
+// /mcp checks the GitHub token with GitHub on every request, so a revoked
+// authorization is refused immediately. Refresh tokens stay as a fallback.
+export const ACCESS_TOKEN_TTL_SECONDS = 10 * 365 * 24 * 60 * 60;
 
 // Refresh token: an encrypted blob, like every other OAuth artifact here.
 // It never expires on its own; it stops working only when GitHub stops
