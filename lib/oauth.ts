@@ -73,8 +73,12 @@ export function nowSeconds(): number {
 // ---------------------------------------------------------------------------
 
 // How long the client should treat an access token as valid before
-// refreshing it. Every refresh re-checks the GitHub token with GitHub.
-export const ACCESS_TOKEN_TTL_SECONDS = 8 * 60 * 60;
+// refreshing it: 30 days (ADR 0014). It is deliberately long. /mcp checks the
+// GitHub token with GitHub on every request, so a short lifetime adds no
+// protection — it only made clients drop sessions that sat idle past it,
+// since a client may not use its refresh token once the access token has
+// already expired. Every refresh still re-checks the GitHub token.
+export const ACCESS_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 // Refresh token: an encrypted blob, like every other OAuth artifact here.
 // It never expires on its own; it stops working only when GitHub stops

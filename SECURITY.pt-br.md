@@ -14,8 +14,10 @@ vulnerabilidade.
 - O servidor nunca guarda o token da conta primária. Ele é repassado do
   GitHub pro Claude a cada troca, e revalidado contra a API do GitHub a
   cada chamada de ferramenta — nada é escrito em disco ou banco de dados.
-- O Claude também recebe um **refresh token** pra renovar a validade de 8
-  horas do token sem novo login. Ele é um blob criptografado (AES-256-GCM)
+- O Claude também recebe um **refresh token** pra renovar a validade de 30
+  dias do token sem novo login (a validade é longa de propósito: toda chamada
+  de ferramenta é conferida com o GitHub de qualquer jeito, veja o
+  [ADR 0014](./docs/adr/0014-token-lifetime-30-days.md)). Ele é um blob criptografado (AES-256-GCM)
   que contém o token do GitHub e fica só com o Claude; nunca expira sozinho
   e para de funcionar assim que a autorização é revogada no GitHub, o que é
   conferido a cada renovação. Trate-o como o próprio token do GitHub. Veja o
