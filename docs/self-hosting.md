@@ -199,3 +199,4 @@ comments, grouped by mode.
 - [0009 — `update_pr` scope: edit, retarget, close/reopen](./adr/0009-update-pr-scope.md)
 - [0010 — `delete_branch` guards: default, protected, open PRs](./adr/0010-delete-branch-guards.md)
 - [0011 — Stateless refresh tokens so Claude renews silently](./adr/0011-stateless-refresh-tokens.md)
+- [0012 — `create_repo`: account by owner, empty, no default visibility](./adr/0012-create-repo.md)

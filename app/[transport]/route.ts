@@ -8,6 +8,16 @@ import { getLinkedAccounts } from "../../lib/accounts";
 import { accessFromError, accessFromPermissions, pickAccount, type RepoAccess } from "../../lib/account-pick";
 import { pickRef } from "../../lib/ref-pick";
 import { deleteBranchRefusal, type OpenPr } from "../../lib/branch-delete";
+import {
+  createErrorMessage,
+  createdMessage,
+  findOwnAccount,
+  membershipFromError,
+  membershipFromState,
+  pickOrgCreator,
+  VISIBILITY_REQUIRED_MESSAGE,
+  type MembershipResult,
+} from "../../lib/repo-create";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -1138,6 +1148,153 @@ const rawHandler = createMcpHandler(
               text: `Repositories accessible by '${target.login}' (${repos.length}):\n${
                 repos.length ? repos.join("\n") : "(none)"
               }`,
+            },
+          ],
+        };
+      }
+    );
+
+    // ---------- REPOSITORIES ----------
+
+    server.registerTool(
+      "create_repo",
+      {
+        description:
+          "Creates a new, EMPTY repository (no README, license or .gitignore) for a user or an organization. The account is chosen by 'owner': a linked account's own login creates a personal repository; any other owner is treated as an organization, and the linked account that is a member of it is used. 'private' has no default — if the user did not say whether the repository is private or public, ask them before calling. An empty repository only accepts commit_file for its first commit (which creates the default branch); commit_tree, create_tree, create_blob, create_commit and create_branch work after that. There is no tool to delete a repository.",
+        inputSchema: z.strictObject({
+          owner: z
+            .string()
+            .describe("Who owns the new repository: your own GitHub login (personal repository) or an organization name."),
+          name: z.string().describe("Repository name, e.g. my-new-project"),
+          private: z
+            .boolean()
+            .optional()
+            .describe(
+              "true for a private repository, false for a public one. Required in practice: if omitted, nothing is created and you must ask the user."
+            ),
+          description: z.string().optional().describe("Short repository description shown on GitHub."),
+          account: z
+            .string()
+            .optional()
+            .describe(
+              "Linked account login to create with. Only needed when more than one linked account belongs to the organization (the call asks for it). In non-OAuth mode, the name of the pre-configured account."
+            ),
+        }),
+      },
+      async ({ owner, name, private: isPrivate, description, account }, ctx) => {
+        if (isPrivate === undefined) {
+          return { isError: true, content: [{ type: "text", text: VISIBILITY_REQUIRED_MESSAGE }] };
+        }
+
+        // Pick the account and whether the repository goes to a user or an org.
+        let octokit: Octokit;
+        let accountLogin: string;
+        let asUser: boolean;
+
+        const authInfo = ctx.http?.authInfo;
+        if (authInfo) {
+          const { primaryLogin, candidates } = await getOAuthCandidates(authInfo);
+
+          if (account) {
+            const match = findOwnAccount(account, candidates);
+            if (!match) {
+              throw new Error(
+                `Account '${account}' is not linked to your session. Available accounts: ${candidates
+                  .map((c) => c.login)
+                  .join(", ")}. Use 'link_account' to link a new one.`
+              );
+            }
+            octokit = new Octokit({ auth: match.token });
+            accountLogin = match.login;
+            asUser = match.login.toLowerCase() === owner.toLowerCase();
+          } else {
+            const own = findOwnAccount(owner, candidates);
+            if (own) {
+              octokit = new Octokit({ auth: own.token });
+              accountLogin = own.login;
+              asUser = true;
+            } else if (candidates.length === 1) {
+              // A single account: no choice to make; GitHub refuses if it
+              // cannot create in that organization.
+              octokit = new Octokit({ auth: candidates[0].token });
+              accountLogin = candidates[0].login;
+              asUser = false;
+            } else {
+              const results: MembershipResult<(typeof candidates)[number]>[] = await Promise.all(
+                candidates.map(async (c) => {
+                  try {
+                    const { data } = await new Octokit({ auth: c.token }).orgs.getMembershipForAuthenticatedUser({
+                      org: owner,
+                    });
+                    return { candidate: c, login: c.login, membership: membershipFromState(data.state) };
+                  } catch (err) {
+                    return { candidate: c, login: c.login, membership: membershipFromError(err) };
+                  }
+                })
+              );
+              const pick = pickOrgCreator(results);
+              if (pick.kind === "revoked") {
+                auditRevoked(primaryLogin, candidates, pick.logins, "create_repo");
+                throw new Error(revokedAccountsMessage(pick.logins));
+              }
+              if (pick.kind === "unavailable") {
+                throw new Error(
+                  `GitHub could not be reached for ${pick.logins
+                    .map((l) => `'${l}'`)
+                    .join(", ")} right now, so the account to create '${owner}/${name}' can't be chosen safely. Nothing was created. Try again in a few seconds, or repeat the call with 'account' set.`
+                );
+              }
+              if (pick.kind === "ambiguous") {
+                throw new Error(
+                  `More than one linked account belongs to '${owner}' (${pick.logins.join(
+                    ", "
+                  )}). Nothing was created. Repeat the call with 'account' set to the one that should create the repository.`
+                );
+              }
+              if (pick.kind === "no-member") {
+                throw new Error(
+                  `'${owner}' is not one of your linked accounts (${candidates
+                    .map((c) => c.login)
+                    .join(", ")}), and none of them is a member of an organization called '${owner}'.${
+                    pick.restricted
+                      ? " At least one account was blocked by the organization's OAuth App access restrictions — an organization owner has to approve this app."
+                      : ""
+                  } Nothing was created. Check the owner name, or link the right account with 'link_account'.`
+                );
+              }
+              octokit = new Octokit({ auth: pick.candidate.token });
+              accountLogin = pick.login;
+              asUser = false;
+            }
+          }
+        } else {
+          const { name: staticName, config } = resolveStaticAccount(account, owner);
+          octokit = new Octokit({ auth: config.token });
+          accountLogin = staticName;
+          const me = await octokit.users.getAuthenticated();
+          asUser = me.data.login.toLowerCase() === owner.toLowerCase();
+        }
+
+        let created;
+        try {
+          created = asUser
+            ? await octokit.repos.createForAuthenticatedUser({ name, private: isPrivate, description, auto_init: false })
+            : await octokit.repos.createInOrg({ org: owner, name, private: isPrivate, description, auto_init: false });
+        } catch (err) {
+          throw new Error(createErrorMessage(owner, name, accountLogin, err));
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: createdMessage({
+                fullName: created.data.full_name,
+                url: created.data.html_url,
+                isPrivate: created.data.private,
+                defaultBranch: created.data.default_branch || "main",
+                account: accountLogin,
+              }),
             },
           ],
         };
