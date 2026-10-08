@@ -52,6 +52,7 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão
+- `unlink_account` — remove uma conta adicional da sua sessão e revoga o token dela no GitHub (nunca a sua conta primária)
 - `list_repos_by_account` — lista os repositórios acessíveis por uma conta vinculada específica
 - `create_repo` — cria um repositório vazio pra você ou pra uma organização; a visibilidade (privado ou público) é sempre escolhida por você (não existe ferramenta pra apagar repositório)
 
@@ -127,6 +128,12 @@ qual conta vincular de novo com `link_account`, e o `list_accounts` marca ela
 como revogada. Enquanto isso, dá pra informar `account` explicitamente (veja
 a [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)).
 
+Não usa mais uma conta vinculada? O `unlink_account` remove ela da sua sessão
+e revoga o token dela no GitHub. Ele só mexe em contas vinculadas à sua
+própria conta primária — outras pessoas que vincularam a mesma conta do
+GitHub continuam com a delas (veja a
+[ADR 0013](./docs/adr/0013-unlink-account.md)).
+
 ## Limite de requisições
 
 Todo endpoint público tem limite de requisições (baseado em Redis, veja o
@@ -196,6 +203,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0010 — `delete_branch` guards: default, protected, open PRs](./docs/adr/0010-delete-branch-guards.md)
 - [0011 — Stateless refresh tokens so Claude renews silently](./docs/adr/0011-stateless-refresh-tokens.md)
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./docs/adr/0012-create-repo.md)
+- [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
 
 ## Licença
 

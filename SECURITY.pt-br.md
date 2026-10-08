@@ -24,7 +24,9 @@ vulnerabilidade.
   vinculada (não-primária)** (funcionalidade `link_account`), e sempre fica
   guardado criptografado (AES-256-GCM), nunca em texto puro. Veja o
   [ADR 0002](./docs/adr/0002-multi-account-oauth-linking.md) pro design
-  completo.
+  completo. O `unlink_account` apaga esse vínculo e revoga o token dele no
+  GitHub; cada pessoa só consegue remover vínculos da própria conta primária
+  (veja a [ADR 0013](./docs/adr/0013-unlink-account.md)).
 - `whoami` nunca retorna um token, só identifica a conta/sessão em uso.
 - Todo endpoint público tem limite de requisições, feito por um limitador
   baseado em Redis, pra frear abuso e tentativas de força bruta (veja o
@@ -56,6 +58,7 @@ execução, um JSON por linha (busque por `"audit":` nos logs da Vercel):
 | `oauth.token.refresh_rejected` | Uma renovação falhou porque o GitHub não aceita mais o token (revogado); a pessoa precisa fazer login de novo |
 | `oauth.token.refresh_transient` | O GitHub não conseguiu validar o token durante uma renovação (resposta 503 + `Retry-After`; o refresh token continua válido) |
 | `oauth.link.completed` / `oauth.link.failed` | Um fluxo de `link_account` terminou ou falhou |
+| `oauth.link.removed` | Uma conta foi desvinculada com `unlink_account`, com o resultado da revogação do token dela no GitHub |
 | `oauth.link.token_revoked` | O GitHub recusou o token guardado de uma conta vinculada (revogado ou expirado), com o ponto em que isso foi detectado; a conta precisa ser vinculada de novo (veja a [ADR 0007](./docs/adr/0007-revoked-linked-accounts.md)) |
 
 Cada linha traz o necessário pra diagnóstico: status do GitHub, o
