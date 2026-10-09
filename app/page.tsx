@@ -149,8 +149,8 @@ export default function Home() {
         <section id="trust">
           <h2>Security &amp; license</h2>
           <p className="section-lead">
-            Open source, permissively licensed, and built so the server
-            itself never holds onto your primary account&apos;s token.
+            Open source, permissively licensed, and built so your GitHub
+            token is stored encrypted and only ever handed back to you.
           </p>
           <div className="trust-row">
             <div className="trust-card">

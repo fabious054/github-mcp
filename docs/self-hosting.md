@@ -60,8 +60,14 @@ minutes). That's acceptable for this use case (the code only ever exists
 inside an HTTPS redirect between GitHub and Claude), but it's a difference
 from a "full" Authorization Server with storage — worth knowing.
 
-The token Claude receives **is the person's own GitHub access token** — the
-server never stores or logs that token, it only forwards it.
+The token Claude receives **is the person's own GitHub access token**. The
+server keeps one per GitHub user, encrypted in MongoDB (`primary_tokens`
+collection, keyed by GitHub user id), and hands that same token to every
+place the person connects from, revoking the extra token GitHub creates on
+each login — otherwise GitHub's 10-tokens-per-app limit revokes live
+sessions. It never logs a token. Without `MONGODB_URI`, the server falls back
+to forwarding a new token on every login (see
+[ADR 0015](./adr/0015-one-token-per-user.md)).
 
 ### Multi-account linking storage
 
@@ -202,3 +208,4 @@ comments, grouped by mode.
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./adr/0012-create-repo.md)
 - [0013 — `unlink_account`: own links only, token revoked](./adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./adr/0014-long-token-lifetime.md)
+- [0015 — One GitHub token per user (GitHub's 10-token limit)](./adr/0015-one-token-per-user.md)

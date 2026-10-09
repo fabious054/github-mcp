@@ -11,9 +11,15 @@ vulnerabilidade.
 - Toda pessoa que conecta autentica com a **própria** conta do GitHub, por
   um fluxo real de OAuth ("Autorizar") — não existe token manual pra gerar
   nem credencial compartilhada.
-- O servidor nunca guarda o token da conta primária. Ele é repassado do
-  GitHub pro Claude a cada troca, e revalidado contra a API do GitHub a
-  cada chamada de ferramenta — nada é escrito em disco ou banco de dados.
+- Cada usuário do GitHub tem **um** token deste app, compartilhado por todos
+  os lugares de onde ele conecta (Claude na web, no computador, no celular,
+  sessões na nuvem). O GitHub permite só 10 tokens por usuário e app e revoga
+  os mais antigos sem avisar quando passa disso, o que derrubava sessões;
+  por isso o servidor guarda esse único token, criptografado (AES-256-GCM),
+  pela id do usuário no GitHub, e revoga o token extra que o GitHub cria a
+  cada login novo. Ele nunca é entregue a ninguém além desse mesmo usuário do
+  GitHub, e é revalidado contra a API do GitHub a cada chamada de ferramenta.
+  Veja o [ADR 0015](./docs/adr/0015-one-token-per-user.md).
 - Os tokens são anunciados com validade de 10 anos de propósito: toda chamada
   de ferramenta é conferida com o GitHub de qualquer jeito, então uma
   autorização revogada é recusada na hora (veja o
@@ -23,8 +29,8 @@ vulnerabilidade.
   e para de funcionar assim que a autorização é revogada no GitHub, o que é
   conferido a cada renovação. Trate-o como o próprio token do GitHub. Veja o
   [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md).
-- A única coisa que este servidor persiste é o token de uma **conta
-  vinculada (não-primária)** (funcionalidade `link_account`), e sempre fica
+- Além desse único token por usuário, o servidor persiste o token de uma
+  **conta vinculada (não-primária)** (funcionalidade `link_account`), e sempre fica
   guardado criptografado (AES-256-GCM), nunca em texto puro. Veja o
   [ADR 0002](./docs/adr/0002-multi-account-oauth-linking.md) pro design
   completo. O `unlink_account` apaga esse vínculo e revoga o token dele no
@@ -57,6 +63,8 @@ execução, um JSON por linha (busque por `"audit":` nos logs da Vercel):
 | `mcp.auth.transient` | O GitHub não conseguiu validar o token naquele momento — 5xx, limite de requisições, erro de rede ou timeout (resposta 503 + `Retry-After`; a sessão é mantida) |
 | `ratelimit.blocked` | Uma requisição recebeu 429, com a rota e qual limite estourou |
 | `oauth.token.issued` | Um login OAuth terminou e o Claude recebeu o token |
+| `oauth.token.reused` | Um login reaproveitou o token guardado do usuário; o token que o GitHub acabou de criar foi revogado (com o resultado) |
+| `oauth.token.stored` | Um login guardou um token novo pro usuário (primeiro login, o guardado foi revogado, ou os escopos mudaram) |
 | `oauth.token.refreshed` | O Claude renovou o token usando o refresh token |
 | `oauth.token.refresh_rejected` | Uma renovação falhou porque o GitHub não aceita mais o token (revogado); a pessoa precisa fazer login de novo |
 | `oauth.token.refresh_transient` | O GitHub não conseguiu validar o token durante uma renovação (resposta 503 + `Retry-After`; o refresh token continua válido) |

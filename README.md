@@ -170,13 +170,14 @@ renewal, it is retried instead of logging you out (see
 ## Security
 
 - No token is ever committed to this repository.
-- The server never stores your primary account's token — it's forwarded
-  from GitHub to Claude on each exchange, and revalidated against the
-  GitHub API on every tool call.
+- You get **one** GitHub token from this app, shared by every place you
+  connect from, so GitHub's 10-tokens-per-app limit never drops your
+  sessions. The server stores it encrypted (AES-256-GCM), only ever hands it
+  back to you, and revalidates it against the GitHub API on every tool call
+  (see [ADR 0015](./docs/adr/0015-one-token-per-user.md)).
 - `whoami` never returns tokens, only identifies the account/session.
-- A linked (non-primary) account's token is the only thing this server
-  persists at all, and it's always stored encrypted (AES-256-GCM) — never
-  in plaintext.
+- A linked (non-primary) account's token is also stored encrypted
+  (AES-256-GCM) — never in plaintext.
 - Authentication and rate-limit events are written to the server logs for
   auditing, without any token — see
   [`SECURITY.md`](./SECURITY.md#audit-logging).
@@ -202,6 +203,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./docs/adr/0012-create-repo.md)
 - [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./docs/adr/0014-long-token-lifetime.md)
+- [0015 — One GitHub token per user (GitHub's 10-token limit)](./docs/adr/0015-one-token-per-user.md)
 
 ## License
 
