@@ -167,6 +167,12 @@ renewal, it is retried instead of logging you out (see
 [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md) and
 [ADR 0014](./docs/adr/0014-long-token-lifetime.md)).
 
+If the connector still drops every time you connect from another place, your
+account was already at GitHub's limit of 10 tokens for this app before
+[ADR 0015](./docs/adr/0015-one-token-per-user.md). Revoke the app once on
+GitHub (Settings → Applications → Authorized OAuth Apps → Revoke) and
+reconnect; from then on every place you connect from shares one token.
+
 ## Security
 
 - No token is ever committed to this repository.
