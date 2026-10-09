@@ -43,8 +43,9 @@ async function readParams(req: Request): Promise<URLSearchParams> {
 
 // This is where Claude exchanges the code it got from /callback for the
 // real access_token, and later renews it with the refresh token. The
-// "access_token" we return IS the GitHub token — this server is just a
-// proxy, it never stores tokens anywhere. See docs/adr/0011.
+// "access_token" we return IS the GitHub token — the one /callback chose for
+// this user (one per GitHub user, see docs/adr/0015). Refresh tokens are
+// stateless, see docs/adr/0011.
 export async function POST(req: Request) {
   const disabled = requireOAuthEnabled();
   if (disabled) return disabled;
