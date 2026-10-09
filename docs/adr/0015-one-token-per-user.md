@@ -79,10 +79,27 @@ On each login (`/callback`, after exchanging the code with GitHub), in
 - All of a user's sessions share one token, so the per-token `/mcp` rate
   limit (ADR 0003) is now shared across that user's sessions. GitHub's own
   API limits are per user anyway.
-- Tokens created before this change stay alive until they are used up or
-  revoked by GitHub; the first login after deploy stores the user's token.
+- Tokens created before this change stay alive until they are revoked; the
+  first login after deploy stores the user's token.
 - Adding a scope later (for example `workflow`) is handled: the stored token
   lacks it, so the new token replaces it.
+
+## Users already at the 10-token cap (found in production, 2026-10-09)
+
+GitHub creates the new token during the code exchange, before this server
+can reuse anything. For a user who already holds 10 tokens, that creation
+immediately revokes another one with `max_for_app`, and GitHub picks the
+**most recently created** token, not the oldest. That is the token this
+server just stored, so reuse never kicks in: each login kills the previous
+login's token (security log on 2026-10-09: the 08:50 login revoked token
+5745832878, created at 08:49; the 08:49 login revoked 5739234584).
+
+Fix: a one-time cleanup. Revoke the app on GitHub (Settings → Applications →
+Authorized OAuth Apps → GHubMCP → Revoke), then reconnect. From then on the
+user holds one token and never reaches the cap: each later login creates a
+second token that is revoked right away. Validated the same day: login at
+08:57 → `oauth.token.stored`; login from a phone at 08:59 →
+`oauth.token.reused` with `revocation: revoked`.
 
 ## Out of scope
 

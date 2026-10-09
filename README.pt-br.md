@@ -171,6 +171,12 @@ renovação, ela é tentada de novo em vez de te desconectar (veja o
 [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md) e o
 [ADR 0014](./docs/adr/0014-long-token-lifetime.md)).
 
+Se o conector ainda cair toda vez que você conecta de outro lugar, sua conta
+já estava no limite de 10 tokens do GitHub pra este app antes do
+[ADR 0015](./docs/adr/0015-one-token-per-user.md). Revogue o app uma vez no
+GitHub (Settings → Applications → Authorized OAuth Apps → Revoke) e conecte
+de novo; a partir daí todos os lugares de onde você conecta usam um só token.
+
 ## Segurança
 
 - Nenhum token é commitado neste repositório.
