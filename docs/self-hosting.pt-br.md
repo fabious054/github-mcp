@@ -65,7 +65,13 @@ diferença em relação a um Authorization Server "completo" com
 armazenamento — vale saber.
 
 O token que o Claude recebe **é o próprio token de acesso do GitHub** da
-pessoa — o servidor nunca guarda nem loga esse token, só repassa.
+pessoa. O servidor guarda um por usuário do GitHub, criptografado no MongoDB
+(coleção `primary_tokens`, pela id do usuário no GitHub), e entrega esse
+mesmo token a todos os lugares de onde a pessoa conecta, revogando o token
+extra que o GitHub cria a cada login — senão o limite de 10 tokens por app do
+GitHub revoga sessões vivas. Nunca loga token nenhum. Sem `MONGODB_URI`, o
+servidor volta a repassar um token novo a cada login (veja o
+[ADR 0015](./adr/0015-one-token-per-user.md)).
 
 ### Armazenamento do vínculo de múltiplas contas
 
@@ -211,3 +217,4 @@ agrupada por modo.
 - [0012 — `create_repo`: account by owner, empty, no default visibility](./adr/0012-create-repo.md)
 - [0013 — `unlink_account`: own links only, token revoked](./adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./adr/0014-long-token-lifetime.md)
+- [0015 — One GitHub token per user (GitHub's 10-token limit)](./adr/0015-one-token-per-user.md)

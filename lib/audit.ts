@@ -14,6 +14,8 @@ export type AuditEvent =
   | "mcp.auth.transient"
   | "ratelimit.blocked"
   | "oauth.token.issued"
+  | "oauth.token.reused"
+  | "oauth.token.stored"
   | "oauth.token.refreshed"
   | "oauth.token.refresh_rejected"
   | "oauth.token.refresh_transient"

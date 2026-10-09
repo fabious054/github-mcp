@@ -10,9 +10,14 @@ before making the repository public, and how to report a vulnerability.
 - Everyone who connects authenticates with their **own** GitHub account
   through a real OAuth "Authorize" flow — there is no manual token to
   generate and no shared credential.
-- The server never stores the primary account's token. It is forwarded from
-  GitHub to Claude on each exchange and revalidated against the GitHub API
-  on every tool call — nothing is written to disk or to a database.
+- Each GitHub user gets **one** token from this app, shared by every place
+  they connect from (Claude web, desktop, mobile, cloud sessions). GitHub
+  allows only 10 tokens per user and app and silently revokes older ones past
+  that, which used to drop sessions; so the server stores that one token,
+  encrypted (AES-256-GCM), keyed by the GitHub user id, and revokes the extra
+  token GitHub creates on each new login. It is never returned to anyone but
+  that same GitHub user, and it is revalidated against the GitHub API on
+  every tool call. See [ADR 0015](./docs/adr/0015-one-token-per-user.md).
 - Tokens are announced with a 10-year lifetime on purpose: every tool call is
   checked with GitHub anyway, so a revoked authorization is refused at once
   (see [ADR 0014](./docs/adr/0014-long-token-lifetime.md)). Claude also
@@ -21,8 +26,8 @@ before making the repository public, and how to report a vulnerability.
   its own and stops working as soon as the authorization is revoked on
   GitHub, which is checked on every renewal. Treat it like the GitHub token
   itself. See [ADR 0011](./docs/adr/0011-stateless-refresh-tokens.md).
-- The only thing this server persists at all is a **linked (non-primary)
-  account's** token (the `link_account` feature), and it is always stored
+- Besides that one token per user, the server persists a **linked
+  (non-primary) account's** token (the `link_account` feature), always stored
   encrypted (AES-256-GCM), never in plaintext. See
   [ADR 0002](./docs/adr/0002-multi-account-oauth-linking.md) for the design.
   `unlink_account` deletes such a link and revokes its token on GitHub; a
@@ -54,6 +59,8 @@ JSON line each (search for `"audit":` in the Vercel logs):
 | `mcp.auth.transient` | GitHub could not verify the token right now — 5xx, rate limit, network error or timeout (answered with 503 + `Retry-After`; the session is kept) |
 | `ratelimit.blocked` | A request was answered with 429, with the route and which limit tripped |
 | `oauth.token.issued` | An OAuth login finished and Claude received its token |
+| `oauth.token.reused` | A login reused the user's stored token; the token GitHub just created was revoked (with the outcome) |
+| `oauth.token.stored` | A login stored a new token for the user (first login, stored one revoked, or scopes changed) |
 | `oauth.token.refreshed` | Claude renewed its token with a refresh token |
 | `oauth.token.refresh_rejected` | A renewal failed because GitHub no longer accepts the token (revoked); the user must log in again |
 | `oauth.token.refresh_transient` | GitHub could not verify the token during a renewal (answered with 503 + `Retry-After`; the refresh token stays valid) |
