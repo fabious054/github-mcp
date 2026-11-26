@@ -23,6 +23,7 @@ import {
   COMMIT_FILES_MAX,
   COMMIT_FILES_PER_PAGE,
   STATS_CONCURRENCY,
+  STATS_MAX_PER_PAGE,
   commitFilesNote,
   compareLimitNotes,
   fileTotals,
@@ -36,6 +37,28 @@ import {
   type GhCommit,
   type GhFile,
 } from "../../lib/commit-history";
+import {
+  ALL_ROLES,
+  CONTRIBUTIONS_QUERY,
+  SEARCH_COMMITS_DEFAULT_PER_PAGE,
+  SEARCH_ISSUES_DEFAULT_PER_PAGE,
+  SEARCH_MAX_PER_PAGE,
+  commitSearchQuery,
+  formatContributionStats,
+  formatIssueItem,
+  isAuthError,
+  issueSearchQueries,
+  mergeCollections,
+  rateLimitMessage,
+  resolvePeriod,
+  searchLimitNote,
+  searchPeriod,
+  windowsWithActivity,
+  yearlyWindows,
+  type Collection,
+  type Period,
+  type SearchIssue,
+} from "../../lib/activity-stats";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -291,6 +314,73 @@ async function resolveRepo(
     throw new Error(`Missing owner/repo, and account '${name}' has no defaultOwner/defaultRepo configured.`);
   }
   return { owner: o, repo: r, octokit: new Octokit({ auth: config.token }), accountName: name };
+}
+
+type SelfAccount = { login: string; octokit: Octokit };
+
+// The accounts of the caller themselves — the primary account and every
+// account linked with 'link_account' (or the configured accounts in non-OAuth
+// mode) — for the person-level stats tools (ADR 0017). Never another
+// person's account. 'account' limits it to one.
+async function listSelfAccounts(
+  authInfo: { token: string; extra?: Record<string, unknown> } | undefined,
+  accountName: string | undefined
+): Promise<SelfAccount[]> {
+  let raw: { login?: string; label: string; token: string }[];
+  if (authInfo) {
+    const { primaryLogin, candidates } = await getOAuthCandidates(authInfo);
+    raw = candidates.map((c, i) => ({
+      login: i === 0 ? primaryLogin : c.login,
+      label: i === 0 ? primaryLogin ?? "primary" : c.login,
+      token: c.token,
+    }));
+  } else {
+    raw = Object.entries(getStaticAccounts()).map(([name, cfg]) => ({ label: name, token: cfg.token }));
+    if (raw.length === 0) resolveStaticAccount(); // throws the standard "no account configured" message
+  }
+
+  if (accountName) {
+    const match = raw.find((a) => a.label.toLowerCase() === accountName.toLowerCase());
+    if (!match) {
+      throw new Error(
+        `Account '${accountName}' is not linked to your session. Available accounts: ${raw.map((a) => a.label).join(", ")}.`
+      );
+    }
+    raw = [match];
+  }
+
+  return Promise.all(
+    raw.map(async (a) => {
+      const octokit = new Octokit({ auth: a.token });
+      if (a.login) return { login: a.login, octokit };
+      try {
+        const me = await octokit.users.getAuthenticated();
+        return { login: me.data.login, octokit };
+      } catch {
+        return { login: a.label, octokit };
+      }
+    })
+  );
+}
+
+// Runs one account's section; a revoked token or a rate limit becomes that
+// account's own message instead of failing (or hiding) the other accounts.
+async function perAccountSection(
+  acc: SelfAccount,
+  primaryLogin: string | undefined,
+  run: () => Promise<string>
+): Promise<string> {
+  try {
+    return await run();
+  } catch (err) {
+    if (isAuthError(err)) {
+      audit("oauth.link.token_revoked", { primaryLogin, linkedLogin: acc.login, where: "activity-stats" });
+      return `## ${acc.login}\n${revokedAccountsMessage([acc.login])}`;
+    }
+    const rl = rateLimitMessage(err);
+    if (rl) return `## ${acc.login}\n${rl}`;
+    throw err;
+  }
 }
 
 const ownerRepoShape = {
@@ -1180,6 +1270,197 @@ const rawHandler = createMcpHandler(
           ...commits.map((c) => formatCommit(c)).join("\n\n").split("\n")
         );
         return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    // ---------- PERSON-LEVEL ACTIVITY STATS (issue #98, ADR 0017) ----------
+
+    const selfAccountShape = {
+      account: z
+        .string()
+        .optional()
+        .describe(
+          "Limit the call to one of YOUR accounts (the primary one or one linked with 'link_account'). Default: every account linked to your session, each reported in its own section. Another person's login is not accepted."
+        ),
+    };
+
+    server.registerTool(
+      "get_contribution_stats",
+      {
+        description:
+          "Statistics of everything YOU did on GitHub in a period, across every repository your token can reach, for each of your linked accounts separately: total commits, pull requests opened, pull request reviews, issues opened and repositories created; the breakdown by repository; and a monthly or daily contribution calendar. Default period: the last 12 months. Longer periods are split by year (GitHub's limit per query) and summed, with per-year subtotals. Only your own accounts — never another person's.",
+        inputSchema: z.strictObject({
+          ...selfAccountShape,
+          from: z.string().optional().describe("Start of the period (ISO 8601, e.g. 2025-01-01). Default: 12 months before 'to'."),
+          to: z.string().optional().describe("End of the period (ISO 8601). Default: now."),
+          calendar: z.enum(["none", "monthly", "daily"]).default("monthly").describe("Contribution calendar granularity"),
+        }),
+      },
+      async ({ account, from, to, calendar }, ctx) => {
+        const period = resolvePeriod(from, to);
+        const windows = yearlyWindows(period);
+        const authInfo = ctx.http?.authInfo;
+        const primaryLogin = typeof authInfo?.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
+        const accounts = await listSelfAccounts(authInfo, account);
+
+        const sections = await Promise.all(
+          accounts.map((acc) =>
+            perAccountSection(acc, primaryLogin, async () => {
+              const fetchWindow = async (w: Period) => {
+                const res = await acc.octokit.graphql<{ viewer: { login: string; contributionsCollection: Collection } }>(
+                  CONTRIBUTIONS_QUERY,
+                  { from: w.from.toISOString(), to: w.to.toISOString() }
+                );
+                return { window: w, collection: res.viewer.contributionsCollection, login: res.viewer.login };
+              };
+              const newest = await fetchWindow(windows[0]);
+              const older = windowsWithActivity(windows, newest.collection.contributionYears).filter((w) => w !== windows[0]);
+              const rest = await mapLimit(older, 4, fetchWindow);
+              const merged = mergeCollections([newest, ...rest]);
+              return formatContributionStats(newest.login, period, merged, calendar);
+            })
+          )
+        );
+
+        const header = `Contribution stats for ${accounts.length} account(s): ${accounts.map((a) => a.login).join(", ")}`;
+        return { content: [{ type: "text", text: [header, ...sections].join("\n\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "search_commits",
+      {
+        description:
+          "Finds the commits YOU authored across every repository your token can reach, for each of your linked accounts separately, newest first: repository, full SHA, date, message and URL. Filter by period, owner (user or organization) or one repository. With 'include_stats: true' each commit also brings lines added/removed and changed files (page size capped at 30). GitHub's commit search only covers each repository's default branch and returns at most 1,000 results; search allows 30 requests per minute per user.",
+        inputSchema: z.strictObject({
+          ...selfAccountShape,
+          since: z.string().optional().describe("Only commits authored on or after this date (ISO 8601)"),
+          until: z.string().optional().describe("Only commits authored on or before this date (ISO 8601)"),
+          owner: z.string().optional().describe("Only repositories of this user or organization"),
+          repo: z.string().optional().describe("Only this repository (requires 'owner')"),
+          per_page: z.number().int().optional().describe("Results per page per account: default 30, up to 100 (up to 30 with include_stats)"),
+          page: z.number().int().min(1).default(1).describe("Page number, starting at 1"),
+          include_stats: z.boolean().default(false).describe("Add lines added/removed and changed files to each commit"),
+        }),
+      },
+      async ({ account, since, until, owner, repo, per_page, page, include_stats }, ctx) => {
+        if (repo && !owner) throw new Error("search_commits: 'repo' needs 'owner' too.");
+        const period = searchPeriod(since, until);
+        const max = include_stats ? STATS_MAX_PER_PAGE : SEARCH_MAX_PER_PAGE;
+        const asked = per_page ?? SEARCH_COMMITS_DEFAULT_PER_PAGE;
+        const size = Math.max(1, Math.min(asked, max));
+        const authInfo = ctx.http?.authInfo;
+        const primaryLogin = typeof authInfo?.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
+        const accounts = await listSelfAccounts(authInfo, account);
+
+        const sections: string[] = [];
+        for (const acc of accounts) {
+          sections.push(
+            await perAccountSection(acc, primaryLogin, async () => {
+              const q = commitSearchQuery(acc.login, period, owner, repo);
+              const res = await acc.octokit.search.commits({ q, sort: "author-date", order: "desc", per_page: size, page });
+              const lines = [`## ${acc.login}`, `Query: ${q}`, `${res.data.total_count} commit(s) found · page ${page} · ${res.data.items.length} shown`];
+              const limit = searchLimitNote(res.data.total_count);
+              if (limit) lines.push(limit);
+              if (asked > max) lines.push(`  Note: per_page ${asked} was capped at ${max}.`);
+              if (res.data.incomplete_results) lines.push("  Note: GitHub reported incomplete results for this search (timeout); retry for the full count.");
+
+              if (include_stats && res.data.items.length) {
+                const detailed = await mapLimit(res.data.items, STATS_CONCURRENCY, async (it) => {
+                  const [o, r] = it.repository.full_name.split("/");
+                  const d = await acc.octokit.repos.getCommit({ owner: o, repo: r, ref: it.sha });
+                  return { repo: it.repository.full_name, commit: d.data as GhCommit };
+                });
+                const add = detailed.reduce((s, x) => s + (x.commit.stats?.additions ?? 0), 0);
+                const del = detailed.reduce((s, x) => s + (x.commit.stats?.deletions ?? 0), 0);
+                lines.push(`Page totals: +${add} -${del}`, "");
+                for (const x of detailed) lines.push(`Repository: ${x.repo}`, formatCommit(x.commit, { includeFiles: true }), "");
+              } else {
+                lines.push("");
+                for (const it of res.data.items) {
+                  const first = it.commit.message.split("\n")[0];
+                  lines.push(`  ${it.repository.full_name} · ${it.sha} · ${it.commit.author?.date ?? "unknown date"} · ${first} · ${it.html_url}`);
+                }
+              }
+              return lines.join("\n").trimEnd();
+            })
+          );
+        }
+
+        const header = `Commit search for ${accounts.length} account(s): ${accounts.map((a) => a.login).join(", ")} (default branches only)`;
+        return { content: [{ type: "text", text: [header, ...sections].join("\n\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "search_issues_prs",
+      {
+        description:
+          "Finds the pull requests and issues YOU were involved in across every repository your token can reach, for each of your linked accounts separately, by role: authored, reviewed (PRs), merged (your PRs that were merged), assigned, commented. For each role: GitHub's total count plus the items with repository, number, title, state and created/closed/merged dates. Period filter uses the creation date (authored, assigned), the last update (reviewed, commented) or the merge date (merged). Search allows 30 requests per minute per user; each role and type is one request.",
+        inputSchema: z.strictObject({
+          ...selfAccountShape,
+          role: z
+            .array(z.enum(["authored", "reviewed", "merged", "assigned", "commented"]))
+            .min(1)
+            .optional()
+            .describe("Roles to search. Default: all five."),
+          type: z.enum(["pr", "issue", "both"]).default("both").describe("Pull requests, issues, or both"),
+          state: z.enum(["open", "closed", "all"]).default("all").describe("Ignored for 'merged'"),
+          since: z.string().optional().describe("Start of the period (ISO 8601)"),
+          until: z.string().optional().describe("End of the period (ISO 8601)"),
+          owner: z.string().optional().describe("Only repositories of this user or organization"),
+          per_page: z.number().int().optional().describe("Items listed per role and type: default 10, up to 100 (the total count is always returned)"),
+          page: z.number().int().min(1).default(1).describe("Page number, starting at 1"),
+        }),
+      },
+      async ({ account, role, type, state, since, until, owner, per_page, page }, ctx) => {
+        const period = searchPeriod(since, until);
+        const roles = role ?? ALL_ROLES;
+        const size = Math.max(1, Math.min(per_page ?? SEARCH_ISSUES_DEFAULT_PER_PAGE, SEARCH_MAX_PER_PAGE));
+        const authInfo = ctx.http?.authInfo;
+        const primaryLogin = typeof authInfo?.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
+        const accounts = await listSelfAccounts(authInfo, account);
+
+        const sections: string[] = [];
+        for (const acc of accounts) {
+          sections.push(
+            await perAccountSection(acc, primaryLogin, async () => {
+              const { queries, skipped } = issueSearchQueries(acc.login, roles, type, state, period, owner);
+              const lines = [`## ${acc.login}`];
+              const summary: string[] = [];
+              const blocks: string[] = [];
+              for (const [i, query] of queries.entries()) {
+                let res;
+                try {
+                  res = await acc.octokit.search.issuesAndPullRequests({ q: query.q, sort: "created", order: "desc", per_page: size, page });
+                } catch (err) {
+                  const rl = rateLimitMessage(err);
+                  if (!rl) throw err;
+                  // Keep what was already fetched; say exactly which roles are missing.
+                  const missing = queries.slice(i).map((x) => `${x.role} · ${x.type === "pr" ? "pull requests" : "issues"}`);
+                  summary.push(`  Not fetched (rate limit): ${missing.join(", ")}`);
+                  blocks.push(rl);
+                  break;
+                }
+                const label = `${query.role} · ${query.type === "pr" ? "pull requests" : "issues"}`;
+                summary.push(`  ${label}: ${res.data.total_count}`);
+                const block = [`### ${label} — ${res.data.total_count} total (period by ${query.dateField} date)`, `Query: ${query.q}`];
+                const limit = searchLimitNote(res.data.total_count);
+                if (limit) block.push(limit);
+                block.push(...(res.data.items as SearchIssue[]).map(formatIssueItem));
+                if (!res.data.items.length) block.push("  (none)");
+                blocks.push(block.join("\n"));
+              }
+              lines.push("Totals:", ...summary);
+              if (skipped.length) lines.push(...skipped.map((s) => `  Note: ${s}`));
+              lines.push("", ...blocks.flatMap((b) => [b, ""]));
+              return lines.join("\n").trimEnd();
+            })
+          );
+        }
+
+        const header = `Pull request / issue search for ${accounts.length} account(s): ${accounts.map((a) => a.login).join(", ")}`;
+        return { content: [{ type: "text", text: [header, ...sections].join("\n\n") }] };
       }
     );
 
