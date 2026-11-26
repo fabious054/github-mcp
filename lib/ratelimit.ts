@@ -111,7 +111,7 @@ function makeClient(url: string) {
   });
 }
 
-function getRedisClientPromise(): Promise<RedisClient> | null {
+export function getRedisClientPromise(): Promise<RedisClient> | null {
   const url = process.env.REDIS_URL;
   if (!url) return null;
 
@@ -130,7 +130,7 @@ function getRedisClientPromise(): Promise<RedisClient> | null {
   return global._redisClientPromise;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`redis timed out after ${ms}ms`)),

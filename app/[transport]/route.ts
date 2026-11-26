@@ -50,6 +50,7 @@ import {
   issueSearchQueries,
   mergeCollections,
   rateLimitMessage,
+  repoFromUrl,
   resolvePeriod,
   searchLimitNote,
   searchPeriod,
@@ -59,6 +60,24 @@ import {
   type Period,
   type SearchIssue,
 } from "../../lib/activity-stats";
+import {
+  DETAIL_CONCURRENCY,
+  DETAIL_TIME_BUDGET_MS,
+  PR_STATS_MAX_PER_PAGE,
+  SEARCHES_PER_CALL,
+  SEARCH_PAGE_SIZE,
+  SEARCH_RESULT_CAP,
+  aggregate,
+  discoveryTtlSeconds,
+  formatBreakdown,
+  monthSlices,
+  pagesFor,
+  splitSlice,
+  type CommitItem,
+  type PrItem,
+  type Slice,
+} from "../../lib/activity-breakdown";
+import { StatsCache, commitStatsKey, discoveryKey, prStatsKey, type Stats } from "../../lib/stats-cache";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -381,6 +400,121 @@ async function perAccountSection(
     if (rl) return `## ${acc.login}\n${rl}`;
     throw err;
   }
+}
+
+// ---------- Activity breakdown helpers (ADR 0018) ----------
+
+type PrRef = { repo: string; number: number; closed: boolean };
+
+// Lines added/removed and files changed for each PR, from the cache when the
+// PR is closed (sizes can still change while it's open), otherwise from
+// GitHub. Stops starting new calls after `deadline`.
+async function fetchPrStats(octokit: Octokit, cache: StatsCache, prs: PrRef[], deadline: number) {
+  const out = new Map<string, Stats>();
+  const closed = prs.filter((p) => p.closed);
+  const cached = await cache.getStats(closed.map((p) => prStatsKey(p.repo, p.number)));
+  closed.forEach((p, i) => {
+    const s = cached[i];
+    if (s) out.set(`${p.repo}#${p.number}`, s);
+  });
+  const missing = prs.filter((p) => !out.has(`${p.repo}#${p.number}`));
+  const toWrite: [string, Stats][] = [];
+  let fetched = 0;
+  await mapLimit(missing, DETAIL_CONCURRENCY, async (p) => {
+    if (Date.now() > deadline) return;
+    const [o, r] = p.repo.split("/");
+    const { data } = await octokit.pulls.get({ owner: o, repo: r, pull_number: p.number });
+    const s = { additions: data.additions, deletions: data.deletions, files: data.changed_files };
+    out.set(`${p.repo}#${p.number}`, s);
+    fetched += 1;
+    if (data.state === "closed") toWrite.push([prStatsKey(p.repo, p.number), s]);
+  });
+  await cache.setStats(toWrite);
+  return Object.assign(out, { fetched });
+}
+
+async function fetchCommitStats(octokit: Octokit, cache: StatsCache, commits: CommitItem[], deadline: number) {
+  const out = new Map<string, Stats>();
+  for (let i = 0; i < commits.length; i += 500) {
+    const chunk = commits.slice(i, i + 500);
+    const cached = await cache.getStats(chunk.map((c) => commitStatsKey(c.repo, c.sha)));
+    chunk.forEach((c, j) => {
+      const s = cached[j];
+      if (s) out.set(`${c.repo}@${c.sha}`, s);
+    });
+  }
+  const missing = commits.filter((c) => !out.has(`${c.repo}@${c.sha}`));
+  const toWrite: [string, Stats][] = [];
+  let fetched = 0;
+  await mapLimit(missing, DETAIL_CONCURRENCY, async (c) => {
+    if (Date.now() > deadline) return;
+    const [o, r] = c.repo.split("/");
+    const { data } = await octokit.repos.getCommit({ owner: o, repo: r, ref: c.sha });
+    const s = { additions: data.stats?.additions ?? 0, deletions: data.stats?.deletions ?? 0, files: data.files?.length ?? 0 };
+    out.set(`${c.repo}@${c.sha}`, s);
+    fetched += 1;
+    toWrite.push([commitStatsKey(c.repo, c.sha), s]);
+  });
+  await cache.setStats(toWrite);
+  return Object.assign(out, { fetched });
+}
+
+type Discovery<T> = { items: T[]; pending: number; truncated: string[]; rateLimited: string | null };
+
+// Finds every item in the given day slices with GitHub search, splitting a
+// slice in two whenever it holds more than GitHub's 1,000-result cap.
+// Completed slices are cached (encrypted, per login). Spends at most
+// `budget.left` searches; slices not reached are reported as pending.
+async function discover<T>(
+  cache: StatsCache,
+  login: string,
+  kind: "commits" | "prs",
+  owner: string,
+  slices: Slice[],
+  budget: { left: number },
+  search: (s: Slice, page: number) => Promise<{ total: number; items: T[] }>
+): Promise<Discovery<T>> {
+  const queue = [...slices];
+  const items: T[] = [];
+  const truncated: string[] = [];
+  while (queue.length) {
+    const s = queue[0];
+    const key = discoveryKey(login, kind, owner, s.from, s.to);
+    const hit = await cache.getDiscovery<T[]>(key);
+    if (hit) {
+      items.push(...hit);
+      queue.shift();
+      continue;
+    }
+    if (budget.left <= 0) break;
+    try {
+      budget.left -= 1;
+      const first = await search(s, 1);
+      if (first.total > SEARCH_RESULT_CAP) {
+        const halves = splitSlice(s);
+        if (halves) {
+          queue.splice(0, 1, ...halves);
+          continue;
+        }
+        truncated.push(s.from);
+      }
+      const pages = pagesFor(first.total);
+      if (pages - 1 > budget.left) break; // finish this slice in the next call
+      const sliceItems = [...first.items];
+      for (let p = 2; p <= pages; p++) {
+        budget.left -= 1;
+        sliceItems.push(...(await search(s, p)).items);
+      }
+      items.push(...sliceItems);
+      await cache.setDiscovery(key, sliceItems, discoveryTtlSeconds(s));
+      queue.shift();
+    } catch (err) {
+      const rl = rateLimitMessage(err);
+      if (!rl) throw err;
+      return { items, pending: queue.length, truncated, rateLimited: rl };
+    }
+  }
+  return { items, pending: queue.length, truncated, rateLimited: null };
 }
 
 const ownerRepoShape = {
@@ -1409,14 +1543,18 @@ const rawHandler = createMcpHandler(
           since: z.string().optional().describe("Start of the period (ISO 8601)"),
           until: z.string().optional().describe("End of the period (ISO 8601)"),
           owner: z.string().optional().describe("Only repositories of this user or organization"),
-          per_page: z.number().int().optional().describe("Items listed per role and type: default 10, up to 100 (the total count is always returned)"),
+          per_page: z.number().int().optional().describe("Items listed per role and type: default 10, up to 100 (up to 30 with include_stats). The total count is always returned."),
           page: z.number().int().min(1).default(1).describe("Page number, starting at 1"),
+          include_stats: z.boolean().default(false).describe("Add each listed PR's size: lines added/removed and files changed (one extra GitHub call per PR, cached for closed PRs)"),
         }),
       },
-      async ({ account, role, type, state, since, until, owner, per_page, page }, ctx) => {
+      async ({ account, role, type, state, since, until, owner, per_page, page, include_stats }, ctx) => {
         const period = searchPeriod(since, until);
         const roles = role ?? ALL_ROLES;
-        const size = Math.max(1, Math.min(per_page ?? SEARCH_ISSUES_DEFAULT_PER_PAGE, SEARCH_MAX_PER_PAGE));
+        const maxSize = include_stats ? PR_STATS_MAX_PER_PAGE : SEARCH_MAX_PER_PAGE;
+        const askedSize = per_page ?? SEARCH_ISSUES_DEFAULT_PER_PAGE;
+        const size = Math.max(1, Math.min(askedSize, maxSize));
+        const cache = new StatsCache();
         const authInfo = ctx.http?.authInfo;
         const primaryLogin = typeof authInfo?.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
         const accounts = await listSelfAccounts(authInfo, account);
@@ -1443,14 +1581,32 @@ const rawHandler = createMcpHandler(
                   break;
                 }
                 const label = `${query.role} · ${query.type === "pr" ? "pull requests" : "issues"}`;
-                summary.push(`  ${label}: ${res.data.total_count}`);
+                const items = res.data.items as SearchIssue[];
                 const block = [`### ${label} — ${res.data.total_count} total (period by ${query.dateField} date)`, `Query: ${query.q}`];
                 const limit = searchLimitNote(res.data.total_count);
                 if (limit) block.push(limit);
-                block.push(...(res.data.items as SearchIssue[]).map(formatIssueItem));
-                if (!res.data.items.length) block.push("  (none)");
+                if (include_stats && query.type === "pr" && items.length) {
+                  const prs = items.map((it) => ({ repo: repoFromUrl(it.repository_url), number: it.number, closed: it.state === "closed" }));
+                  const stats = await fetchPrStats(acc.octokit, cache, prs, Date.now() + DETAIL_TIME_BUDGET_MS);
+                  let add = 0;
+                  let del = 0;
+                  for (const it of items) {
+                    const s = stats.get(`${repoFromUrl(it.repository_url)}#${it.number}`);
+                    if (s) {
+                      add += s.additions;
+                      del += s.deletions;
+                    }
+                    block.push(`${formatIssueItem(it)}${s ? ` · +${s.additions} −${s.deletions}, ${s.files} files` : " · (size not fetched)"}`);
+                  }
+                  summary.push(`  ${label}: ${res.data.total_count} (listed ${items.length}: +${add} −${del})`);
+                } else {
+                  summary.push(`  ${label}: ${res.data.total_count}`);
+                  block.push(...items.map(formatIssueItem));
+                }
+                if (!items.length) block.push("  (none)");
                 blocks.push(block.join("\n"));
               }
+              if (include_stats && askedSize > maxSize) lines.push(`Note: per_page ${askedSize} was capped at ${maxSize} because include_stats fetches each PR.`);
               lines.push("Totals:", ...summary);
               if (skipped.length) lines.push(...skipped.map((s) => `  Note: ${s}`));
               lines.push("", ...blocks.flatMap((b) => [b, ""]));
@@ -1460,6 +1616,112 @@ const rawHandler = createMcpHandler(
         }
 
         const header = `Pull request / issue search for ${accounts.length} account(s): ${accounts.map((a) => a.login).join(", ")}`;
+        return { content: [{ type: "text", text: [header, ...sections].join("\n\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "get_activity_breakdown",
+      {
+        description:
+          "How much YOU changed in a period, across every repository your token can reach — private ones included — for each of your linked accounts separately: commits, lines added/removed and files changed, plus the PRs you opened (and how many were merged) with their size; totals, by repository and by month. Commits are counted on each repository's default branch. Large periods are measured in batches: the response says what share was measured ('Coverage'); call again with the same arguments to continue — measured items are cached, so it resumes where it stopped. Default period: the last 12 months. Only your own accounts.",
+        inputSchema: z.strictObject({
+          ...selfAccountShape,
+          since: z.string().optional().describe("Start of the period (ISO 8601, e.g. 2026-01-01). Default: 12 months before 'until'."),
+          until: z.string().optional().describe("End of the period (ISO 8601). Default: now."),
+          owner: z.string().optional().describe("Only repositories of this user or organization, e.g. robozz-br"),
+        }),
+      },
+      async ({ account, since, until, owner }, ctx) => {
+        const period = resolvePeriod(since, until);
+        const slices = monthSlices(period.from, period.to);
+        const deadline = Date.now() + DETAIL_TIME_BUDGET_MS;
+        const authInfo = ctx.http?.authInfo;
+        const primaryLogin = typeof authInfo?.extra?.githubLogin === "string" ? (authInfo.extra.githubLogin as string) : undefined;
+        const accounts = await listSelfAccounts(authInfo, account);
+        const cache = new StatsCache();
+        const ownerQ = owner ? ` user:${owner}` : "";
+
+        const sections: string[] = [];
+        for (const acc of accounts) {
+          sections.push(
+            await perAccountSection(acc, primaryLogin, async () => {
+              const budget = { left: SEARCHES_PER_CALL };
+              const hitsBefore = cache.hits;
+              const commits = await discover<CommitItem>(cache, acc.login, "commits", owner ?? "", slices, budget, async (s, page) => {
+                const res = await acc.octokit.search.commits({
+                  q: `author:${acc.login} author-date:${s.from}..${s.to}${ownerQ}`,
+                  sort: "author-date",
+                  order: "desc",
+                  per_page: SEARCH_PAGE_SIZE,
+                  page,
+                });
+                return {
+                  total: res.data.total_count,
+                  items: res.data.items.map((it) => ({
+                    repo: it.repository.full_name,
+                    sha: it.sha,
+                    date: it.commit.author?.date ?? `${s.from}T00:00:00Z`,
+                    private: Boolean(it.repository.private),
+                  })),
+                };
+              });
+              const prs = await discover<PrItem>(cache, acc.login, "prs", owner ?? "", slices, budget, async (s, page) => {
+                const res = await acc.octokit.search.issuesAndPullRequests({
+                  q: `is:pr author:${acc.login} created:${s.from}..${s.to}${ownerQ}`,
+                  sort: "created",
+                  order: "desc",
+                  per_page: SEARCH_PAGE_SIZE,
+                  page,
+                });
+                return {
+                  total: res.data.total_count,
+                  items: (res.data.items as SearchIssue[]).map((it) => ({
+                    repo: repoFromUrl(it.repository_url),
+                    number: it.number,
+                    created: it.created_at,
+                    merged: it.pull_request?.merged_at ?? null,
+                    state: it.state,
+                    private: false,
+                  })),
+                };
+              });
+
+              // Same commit can surface twice (e.g. a fork); count it once.
+              const seen = new Set<string>();
+              const commitItems = commits.items.filter((c) => {
+                const k = `${c.repo}@${c.sha}`;
+                if (seen.has(k)) return false;
+                seen.add(k);
+                return true;
+              });
+              const privateRepos = new Set(commitItems.filter((c) => c.private).map((c) => c.repo));
+              const prItems = prs.items.map((p) => ({ ...p, private: privateRepos.has(p.repo) }));
+
+              const commitStats = await fetchCommitStats(acc.octokit, cache, commitItems, deadline);
+              const prStats = await fetchPrStats(
+                acc.octokit,
+                cache,
+                prItems.map((p) => ({ repo: p.repo, number: p.number, closed: p.state === "closed" })),
+                deadline
+              );
+
+              const breakdown = aggregate(commitItems, commitStats, prItems, prStats);
+              const text = formatBreakdown(acc.login, slices[0].from, slices[slices.length - 1].to, breakdown, {
+                discoveryComplete: commits.pending === 0 && prs.pending === 0,
+                pendingSlices: commits.pending + prs.pending,
+                truncatedSlices: [...commits.truncated, ...prs.truncated],
+                cache: cache.available ? "on" : "off",
+                cacheHits: cache.hits - hitsBefore,
+                fetchedNow: commitStats.fetched + prStats.fetched,
+              });
+              const rl = commits.rateLimited ?? prs.rateLimited;
+              return rl ? `${text}\n\n${rl}` : text;
+            })
+          );
+        }
+
+        const header = `Activity breakdown for ${accounts.length} account(s): ${accounts.map((a) => a.login).join(", ")}`;
         return { content: [{ type: "text", text: [header, ...sections].join("\n\n") }] };
       }
     );
