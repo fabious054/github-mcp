@@ -52,6 +52,9 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `list_commits` — lista commits com autor, datas, mensagem e pais; filtra por branch, caminho, autor e período; `include_stats` acrescenta linhas adicionadas/removidas e arquivos alterados em cada commit (veja o [ADR 0016](./docs/adr/0016-commit-history-stats.md))
 - `get_commit` — lê um commit completo: estatísticas e todos os arquivos alterados, com o diff de cada arquivo se pedido
 - `compare_commits` — compara duas branches, tags ou SHAs: à frente/atrás, commits, arquivos alterados e totais
+- `get_contribution_stats` — a sua própria atividade em todos os repositórios que você alcança, por conta vinculada: totais de commits, PRs, reviews, issues e repositórios criados, divisão por repositório e calendário de contribuições; qualquer período (dividido por ano) — veja o [ADR 0017](./docs/adr/0017-person-level-activity-stats.md)
+- `search_commits` — os commits que você fez em todos os repositórios, por conta vinculada, com estatísticas por commit se pedido (só branches padrão)
+- `search_issues_prs` — os PRs e issues que você criou, revisou, mesclou, recebeu atribuídos ou comentou, em todos os repositórios, com totais por papel
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão

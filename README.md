@@ -51,6 +51,9 @@ target. See [Available tools](#available-tools) below.
 - `list_commits` — lists commits with author, dates, message and parents; filters by branch, path, author and date range; `include_stats` adds lines added/removed and changed files per commit (see [ADR 0016](./docs/adr/0016-commit-history-stats.md))
 - `get_commit` — reads one commit in full: stats and every changed file, optionally with each file's diff
 - `compare_commits` — compares two branches, tags or SHAs: ahead/behind, commits, changed files and totals
+- `get_contribution_stats` — your own activity across every repository you can reach, per linked account: totals of commits, PRs, reviews, issues and repositories created, breakdown by repository, contribution calendar; any period (split by year) — see [ADR 0017](./docs/adr/0017-person-level-activity-stats.md)
+- `search_commits` — the commits you authored across repositories, per linked account, with optional per-commit stats (default branches only)
+- `search_issues_prs` — the PRs and issues you authored, reviewed, merged, were assigned or commented on, across repositories, with totals per role
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
