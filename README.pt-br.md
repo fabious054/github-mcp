@@ -49,6 +49,9 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `comment_issue` — comenta numa issue (ex: relatório final de QA)
 - `read_file` — lê o conteúdo de um arquivo numa branch (`branch`, ou `ref` pra branch, tag ou commit; padrão `main`)
 - `search_code` — busca código no repositório
+- `list_commits` — lista commits com autor, datas, mensagem e pais; filtra por branch, caminho, autor e período; `include_stats` acrescenta linhas adicionadas/removidas e arquivos alterados em cada commit (veja o [ADR 0016](./docs/adr/0016-commit-history-stats.md))
+- `get_commit` — lê um commit completo: estatísticas e todos os arquivos alterados, com o diff de cada arquivo se pedido
+- `compare_commits` — compara duas branches, tags ou SHAs: à frente/atrás, commits, arquivos alterados e totais
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão

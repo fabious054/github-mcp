@@ -48,6 +48,9 @@ target. See [Available tools](#available-tools) below.
 - `comment_issue` — comments on an issue (e.g. final QA report)
 - `read_file` — reads a file's content on a branch (`branch`, or `ref` for a branch, tag or commit; default `main`)
 - `search_code` — searches code in the repository
+- `list_commits` — lists commits with author, dates, message and parents; filters by branch, path, author and date range; `include_stats` adds lines added/removed and changed files per commit (see [ADR 0016](./docs/adr/0016-commit-history-stats.md))
+- `get_commit` — reads one commit in full: stats and every changed file, optionally with each file's diff
+- `compare_commits` — compares two branches, tags or SHAs: ahead/behind, commits, changed files and totals
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
