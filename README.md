@@ -53,7 +53,8 @@ target. See [Available tools](#available-tools) below.
 - `compare_commits` — compares two branches, tags or SHAs: ahead/behind, commits, changed files and totals
 - `get_contribution_stats` — your own activity across every repository you can reach, per linked account: totals of commits, PRs, reviews, issues and repositories created, breakdown by repository, contribution calendar; any period (split by year) — see [ADR 0017](./docs/adr/0017-person-level-activity-stats.md)
 - `search_commits` — the commits you authored across repositories, per linked account, with optional per-commit stats (default branches only)
-- `search_issues_prs` — the PRs and issues you authored, reviewed, merged, were assigned or commented on, across repositories, with totals per role
+- `search_issues_prs` — the PRs and issues you authored, reviewed, merged, were assigned or commented on, across repositories, with totals per role; `include_stats` adds each PR's size
+- `get_activity_breakdown` — how much you changed in a period, private repositories included: commits, lines added/removed, files and PRs with their size — totals, by repository and by month; large periods are measured in batches (call again to continue) — see [ADR 0018](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
