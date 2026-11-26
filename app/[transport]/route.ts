@@ -19,6 +19,23 @@ import {
   VISIBILITY_REQUIRED_MESSAGE,
   type MembershipResult,
 } from "../../lib/repo-create";
+import {
+  COMMIT_FILES_MAX,
+  COMMIT_FILES_PER_PAGE,
+  STATS_CONCURRENCY,
+  commitFilesNote,
+  compareLimitNotes,
+  fileTotals,
+  formatCommit,
+  formatFile,
+  historyErrorMessage,
+  listFilesNote,
+  mapLimit,
+  nextPageFromLink,
+  resolvePerPage,
+  type GhCommit,
+  type GhFile,
+} from "../../lib/commit-history";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -978,6 +995,191 @@ const rawHandler = createMcpHandler(
         const res = await octokit.search.code({ q: `${query} repo:${o}/${r}` });
         const lines = res.data.items.map((i) => `${i.path} — ${i.html_url}`);
         return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "Nothing found." }] };
+      }
+    );
+
+    // ---------- COMMIT HISTORY (issue #96, ADR 0016) ----------
+
+    server.registerTool(
+      "list_commits",
+      {
+        description:
+          "Lists a repository's commits, newest first, with full SHA, author and committer (login, name, email), dates, full message, parents and signature status. Filter by branch/tag/SHA, file or folder path, author, and date range — for activity statistics. With 'include_stats: true' each commit also brings lines added/removed and the files it changed (one extra GitHub call per commit on your own token; page size capped at 30).",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          branch: z.string().optional().describe("Branch to list from. Same as 'sha'. Default: the repository's default branch."),
+          sha: z.string().optional().describe("Branch, tag or commit SHA to start listing from. Same as 'branch'."),
+          path: z.string().optional().describe("Only commits that touched this file or folder, e.g. app/ or README.md"),
+          author: z.string().optional().describe("Only commits by this GitHub login or commit email"),
+          since: z.string().optional().describe("Only commits on or after this date (ISO 8601, e.g. 2026-11-01T00:00:00Z)"),
+          until: z.string().optional().describe("Only commits on or before this date (ISO 8601)"),
+          per_page: z.number().int().optional().describe("Commits per page: up to 100, or up to 30 with include_stats. Default: the maximum."),
+          page: z.number().int().min(1).default(1).describe("Page number, starting at 1"),
+          include_stats: z.boolean().default(false).describe("Add lines added/removed and changed files to each commit"),
+        }),
+      },
+      async ({ account, owner, repo, branch, sha, path, author, since, until, per_page, page, include_stats }, ctx) => {
+        if (branch !== undefined && sha !== undefined && branch !== sha) {
+          throw new Error(`list_commits received both 'sha' ('${sha}') and 'branch' ('${branch}') with different values. Pass only one of them.`);
+        }
+        const start = sha ?? branch;
+        const size = resolvePerPage(per_page, include_stats);
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const where = `${o}/${r}${start ? ` (${start})` : ""}`;
+
+        let res;
+        try {
+          res = await octokit.repos.listCommits({
+            owner: o,
+            repo: r,
+            sha: start,
+            path,
+            author,
+            since,
+            until,
+            per_page: size.perPage,
+            page,
+          });
+        } catch (err) {
+          const msg = historyErrorMessage(err, where);
+          if (msg) throw new Error(msg);
+          throw err;
+        }
+
+        let commits: GhCommit[] = res.data as GhCommit[];
+        if (include_stats && commits.length) {
+          commits = await mapLimit(commits, STATS_CONCURRENCY, async (c) => {
+            const detail = await octokit.repos.getCommit({ owner: o, repo: r, ref: c.sha });
+            return detail.data as GhCommit;
+          });
+        }
+
+        const next = nextPageFromLink(res.headers.link);
+        const header = [
+          `${commits.length} commit(s) in ${where}, page ${page}${next ? ` — more on page ${next}` : " — last page"} · account: ${accountName}`,
+        ];
+        const filters = [
+          path && `path=${path}`,
+          author && `author=${author}`,
+          since && `since=${since}`,
+          until && `until=${until}`,
+        ].filter(Boolean);
+        if (filters.length) header.push(`Filters: ${filters.join(", ")}`);
+        if (size.capped) {
+          header.push(
+            `Note: per_page ${size.requested} was capped at ${size.perPage}${include_stats ? " because include_stats fetches each commit's detail" : ""}.`
+          );
+        }
+        if (include_stats && commits.length) {
+          const add = commits.reduce((s, c) => s + (c.stats?.additions ?? 0), 0);
+          const del = commits.reduce((s, c) => s + (c.stats?.deletions ?? 0), 0);
+          header.push(`Page totals: +${add} -${del} across ${commits.length} commit(s)`);
+        }
+
+        const body = commits.length
+          ? commits
+              .map((c) => {
+                const block = formatCommit(c, { includeFiles: include_stats });
+                const note = include_stats ? listFilesNote(c) : null;
+                return note ? `${block}\n${note}` : block;
+              })
+              .join("\n\n")
+          : "No commits found for these filters.";
+        return { content: [{ type: "text", text: `${header.join("\n")}\n\n${body}` }] };
+      }
+    );
+
+    server.registerTool(
+      "get_commit",
+      {
+        description:
+          "Reads one commit in full: author and committer, dates, message, parents, signature status, total lines added/removed, and every file it changed (status, lines added/removed, previous name on renames). 'include_patch: true' also returns each file's diff, truncated per file.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          ref: z.string().describe("Commit SHA (full or abbreviated), branch or tag. A branch or tag reads its latest commit."),
+          include_patch: z.boolean().default(false).describe("Also return each file's diff (truncated per file)"),
+        }),
+      },
+      async ({ account, owner, repo, ref, include_patch }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const where = `${o}/${r} (${ref})`;
+
+        let commit: GhCommit | undefined;
+        const files: GhFile[] = [];
+        try {
+          for (let page = 1; files.length < COMMIT_FILES_MAX; page++) {
+            const res = await octokit.repos.getCommit({
+              owner: o,
+              repo: r,
+              ref,
+              per_page: COMMIT_FILES_PER_PAGE,
+              page,
+            });
+            const data = res.data as GhCommit;
+            if (!commit) commit = data;
+            const pageFiles = data.files ?? [];
+            files.push(...pageFiles);
+            if (pageFiles.length < COMMIT_FILES_PER_PAGE) break;
+          }
+        } catch (err) {
+          const msg = historyErrorMessage(err, where);
+          if (msg) throw new Error(msg);
+          throw err;
+        }
+
+        const full = { ...commit!, files };
+        const parts = [`Account: ${accountName}`, formatCommit(full, { includeFiles: true, includePatch: include_patch })];
+        const note = commitFilesNote(files.length);
+        if (note) parts.push(note);
+        return { content: [{ type: "text", text: parts.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "compare_commits",
+      {
+        description:
+          "Compares two branches, tags or SHAs: whether 'head' is ahead, behind, identical or diverged from 'base', the commits in head that are not in base, every file changed between them with lines added/removed, and the totals. 'head' can be 'user:branch' for a fork. GitHub returns at most 250 commits and 300 files per comparison; the response says when a limit was hit.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          base: z.string().describe("Starting point: branch, tag or SHA, e.g. v1.2.0 or main"),
+          head: z.string().describe("End point: branch, tag or SHA (or 'user:branch' for a fork), e.g. v1.3.0"),
+          include_files: z.boolean().default(true).describe("List the changed files (the totals are always returned)"),
+        }),
+      },
+      async ({ account, owner, repo, base, head, include_files }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const where = `${o}/${r} (${base}...${head})`;
+
+        let data;
+        try {
+          ({ data } = await octokit.repos.compareCommitsWithBasehead({ owner: o, repo: r, basehead: `${base}...${head}` }));
+        } catch (err) {
+          const msg = historyErrorMessage(err, where);
+          if (msg) throw new Error(msg);
+          throw err;
+        }
+
+        const commits = data.commits as GhCommit[];
+        const files = (data.files ?? []) as GhFile[];
+        const totals = fileTotals(files);
+        const lines = [
+          `Comparison ${where} · account: ${accountName}`,
+          `Status: ${data.status} · ahead by ${data.ahead_by} · behind by ${data.behind_by}`,
+          `Commits in head not in base: ${data.total_commits}`,
+          `Totals: +${totals.additions} -${totals.deletions} (${totals.changes} lines changed) across ${totals.files} file(s)`,
+          `URL: ${data.html_url}`,
+          ...compareLimitNotes(head, data.total_commits, commits.length, files.length),
+        ];
+        if (include_files && files.length) {
+          lines.push("", "Files:", ...files.map(formatFile));
+        }
+        lines.push(
+          "",
+          commits.length ? `Commits (${commits.length}, oldest first):` : "No commits in head that are not in base.",
+          ...commits.map((c) => formatCommit(c)).join("\n\n").split("\n")
+        );
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       }
     );
 
