@@ -78,6 +78,32 @@ import {
   type Slice,
 } from "../../lib/activity-breakdown";
 import { StatsCache, commitStatsKey, discoveryKey, prStatsKey, type Stats } from "../../lib/stats-cache";
+import {
+  ADD_DRAFT_MUTATION,
+  ADD_ITEM_MUTATION,
+  ARCHIVE_ITEM_MUTATION,
+  CLEAR_FIELD_MUTATION,
+  CONTENT_ID_QUERY,
+  DELETE_ITEM_MUTATION,
+  GET_PROJECT_QUERY,
+  ITEM_BY_ID_QUERY,
+  LIST_ITEMS_QUERY,
+  LIST_PROJECTS_QUERY,
+  MISSING_SCOPE_MESSAGE,
+  MOVE_ITEM_MUTATION,
+  UNARCHIVE_ITEM_MUTATION,
+  UPDATE_FIELD_MUTATION,
+  formatItem,
+  formatProject,
+  isMissingProjectScope,
+  isNotFound,
+  matchesFilter,
+  parseFilter,
+  parseItemRef,
+  resolveValue,
+  type Item,
+  type Project,
+} from "../../lib/projects";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -398,6 +424,165 @@ async function perAccountSection(
     }
     const rl = rateLimitMessage(err);
     if (rl) return `## ${acc.login}\n${rl}`;
+    throw err;
+  }
+}
+
+// ---------- Projects (v2) helpers (ADR 0019) ----------
+
+type ProjectAccess = RepoAccess | "no-scope";
+
+async function fetchProject(octokit: Octokit, login: string, number: number): Promise<Project | null> {
+  const res = await octokit.graphql<{ repositoryOwner: { projectV2?: Project | null } | null }>(GET_PROJECT_QUERY, {
+    login,
+    number,
+  });
+  return res.repositoryOwner?.projectV2 ?? null;
+}
+
+async function projectAccess(token: string, login: string, number: number): Promise<{ access: ProjectAccess; project?: Project }> {
+  try {
+    const project = await fetchProject(new Octokit({ auth: token }), login, number);
+    if (!project) return { access: "none" };
+    return { access: project.viewerCanUpdate ? "write" : "read", project };
+  } catch (err) {
+    if (isMissingProjectScope(err)) return { access: "no-scope" };
+    if (isNotFound(err)) return { access: "none" };
+    return { access: accessFromError(err) };
+  }
+}
+
+type ResolvedProject = { octokit: Octokit; accountName: string; owner: string; project: Project };
+
+// Same account rules as repositories (ADR 0006/0007): explicit 'account' wins;
+// with several linked accounts, the one that can edit the project; never a
+// silent pick on incomplete information — including an account whose token
+// still lacks the `project` scope.
+async function resolveProject(
+  authInfo: { token: string; extra?: Record<string, unknown> } | undefined,
+  accountName: string | undefined,
+  owner: string | undefined,
+  number: number
+): Promise<ResolvedProject> {
+  type Cand = { login: string; token: string };
+  let candidates: Cand[];
+  let primaryLogin: string | undefined;
+  if (authInfo) {
+    const oc = await getOAuthCandidates(authInfo);
+    primaryLogin = oc.primaryLogin;
+    candidates = oc.candidates.map((c) => ({ login: c.login, token: c.token }));
+  } else {
+    const { name, config } = resolveStaticAccount(accountName, owner);
+    candidates = [{ login: name, token: config.token }];
+    owner = owner || config.defaultOwner;
+  }
+  const o = owner || primaryLogin;
+  if (!o) throw new Error("Missing 'owner': the user or organization that owns the project.");
+
+  if (accountName && authInfo) {
+    const match = candidates.find((c) => c.login.toLowerCase() === accountName.toLowerCase());
+    if (!match) {
+      throw new Error(
+        `Account '${accountName}' is not linked to your session. Available accounts: ${candidates.map((c) => c.login).join(", ")}.`
+      );
+    }
+    candidates = [match];
+  }
+
+  const results = await Promise.all(candidates.map(async (c) => ({ c, ...(await projectAccess(c.token, o, number)) })));
+  const noScope = results.filter((r) => r.access === "no-scope");
+  if (noScope.length === results.length) throw new Error(MISSING_SCOPE_MESSAGE);
+  if (noScope.length > 0) {
+    throw new Error(
+      `${noScope.map((r) => `'${r.c.login}'`).join(", ")} can't be checked for project ${o}#${number} yet: ${MISSING_SCOPE_MESSAGE} Or repeat the call with 'account' set to another account.`
+    );
+  }
+
+  const pick = pickAccount(
+    results.map((r) => ({ candidate: r, login: r.c.login, access: r.access as RepoAccess })),
+    primaryLogin
+  );
+  if (pick.kind === "picked" && pick.candidate.project) {
+    return { octokit: new Octokit({ auth: pick.candidate.c.token }), accountName: pick.login, owner: o, project: pick.candidate.project };
+  }
+  if (pick.kind === "revoked") throw new Error(revokedAccountsMessage(pick.logins));
+  if (pick.kind === "unavailable") {
+    throw new Error(`GitHub could not be reached for ${pick.logins.map((l) => `'${l}'`).join(", ")} right now. Try again in a few seconds, or set 'account'.`);
+  }
+  if (pick.kind === "ambiguous") {
+    throw new Error(
+      `More than one linked account can use project ${o}#${number} (${pick.options.map((a) => `${a.login}: ${a.access}`).join(", ")}). Repeat the call with 'account' set.`
+    );
+  }
+  throw new Error(`Project ${o}#${number} was not found, or none of your linked accounts can see it. Use list_projects to see the projects of '${o}'.`);
+}
+
+function requireWrite(rp: ResolvedProject) {
+  if (rp.project.viewerCanUpdate === false) {
+    throw new Error(`Account '${rp.accountName}' can read project ${rp.owner}#${rp.project.number} but not edit it.`);
+  }
+}
+
+type Content = { id: string; projectItems: { nodes: { id: string; project: { id: string } }[] } };
+
+async function contentOf(octokit: Octokit, parts: { owner: string; repo: string; number: number }): Promise<Content> {
+  const res = await octokit.graphql<{ repository: { issueOrPullRequest: Content | null } | null }>(CONTENT_ID_QUERY, {
+    owner: parts.owner,
+    name: parts.repo,
+    number: parts.number,
+  });
+  const c = res.repository?.issueOrPullRequest;
+  if (!c) throw new Error(`${parts.owner}/${parts.repo}#${parts.number} was not found, or this account can't see it.`);
+  return c;
+}
+
+// An item given as an item ID (PVTI_…), 'owner/repo#123' or an issue/PR URL.
+async function resolveItemId(rp: ResolvedProject, ref: string): Promise<string> {
+  const r = ref.trim();
+  if (/^PVTI_/.test(r)) {
+    const res = await rp.octokit.graphql<{ node: { id: string; project?: { id: string } } | null }>(ITEM_BY_ID_QUERY, { id: r });
+    if (!res.node?.project || res.node.project.id !== rp.project.id) {
+      throw new Error(`Item '${r}' is not on project ${rp.owner}#${rp.project.number}.`);
+    }
+    return r;
+  }
+  const parts = parseItemRef(r);
+  if (!parts) throw new Error(`'${ref}' is not an item reference. Use 'owner/repo#123', an issue/PR URL, or an item ID (PVTI_…).`);
+  const content = await contentOf(rp.octokit, parts);
+  const item = content.projectItems.nodes.find((n) => n.project.id === rp.project.id);
+  if (!item) {
+    throw new Error(`${parts.owner}/${parts.repo}#${parts.number} is not on project ${rp.owner}#${rp.project.number}. Add it first with add_project_item.`);
+  }
+  return item.id;
+}
+
+async function setFields(rp: ResolvedProject, itemId: string, fields: Record<string, string | number | null>): Promise<string[]> {
+  // Resolve every value before writing anything, so a bad name changes nothing.
+  const resolved = Object.entries(fields).map(([name, raw]) => resolveValue(rp.project, name, raw));
+  const done: string[] = [];
+  for (const r of resolved) {
+    if (r.value === null) {
+      await rp.octokit.graphql(CLEAR_FIELD_MUTATION, { projectId: rp.project.id, itemId, fieldId: r.field.id });
+    } else {
+      await rp.octokit.graphql(UPDATE_FIELD_MUTATION, { projectId: rp.project.id, itemId, fieldId: r.field.id, value: r.value });
+    }
+    done.push(`${r.field.name} → ${r.display}`);
+  }
+  return done;
+}
+
+async function readItem(rp: ResolvedProject, itemId: string): Promise<string> {
+  const res = await rp.octokit.graphql<{ node: Item | null }>(ITEM_BY_ID_QUERY, { id: itemId });
+  return res.node ? formatItem(res.node) : `  item ${itemId}`;
+}
+
+// A missing `project` scope always gives the same actionable message,
+// whichever call hit it.
+async function withProjectScope<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isMissingProjectScope(err)) throw new Error(MISSING_SCOPE_MESSAGE);
     throw err;
   }
 }
@@ -1727,6 +1912,238 @@ const rawHandler = createMcpHandler(
         const header = `Activity breakdown for ${accounts.length} account(s): ${accounts.map((a) => a.login).join(", ")}`;
         return { content: [{ type: "text", text: [header, ...sections].join("\n\n") }] };
       }
+    );
+
+    // ---------- PROJECTS (v2) BOARD (issue #104, ADR 0019) ----------
+
+    const projectShape = {
+      account: ownerRepoShape.account,
+      owner: z.string().optional().describe("User or organization that owns the project, e.g. robozz-br. Default: your own GitHub user."),
+      number: z.number().int().min(1).describe("Project number, as in github.com/orgs/<owner>/projects/<number>"),
+    };
+    const itemRefSchema = z.string().describe("The item: 'owner/repo#123', an issue/PR URL, or an item ID (PVTI_…) from list_project_items");
+    const fieldsSchema = z
+      .record(z.string(), z.union([z.string(), z.number(), z.null()]))
+      .describe(
+        "Field name → value, e.g. {\"Status\": \"In progress\", \"Priority\": \"High\", \"Target date\": \"2026-12-15\", \"Iteration\": \"@current\"}. Single select: option name. Date: YYYY-MM-DD. Iteration: its title, '@current' or '@next'. null clears the field."
+      );
+
+    server.registerTool(
+      "list_projects",
+      {
+        description: "Lists the GitHub Projects (boards) of a user or organization, most recently updated first: number, title, URL, item count, open/closed.",
+        inputSchema: z.strictObject({
+          account: ownerRepoShape.account,
+          owner: z.string().optional().describe("User or organization. Default: your own GitHub user."),
+          include_closed: z.boolean().default(false).describe("Also list closed projects"),
+          after: z.string().optional().describe("Pagination cursor from a previous call"),
+        }),
+      },
+      async ({ account, owner, include_closed, after }, ctx) =>
+        withProjectScope(async () => {
+          const authInfo = ctx.http?.authInfo;
+          const accounts = await listSelfAccounts(authInfo, account);
+          const acc = accounts[0];
+          const o = owner || acc.login;
+          const res = await acc.octokit.graphql<{
+            repositoryOwner: {
+              login: string;
+              projectsV2?: {
+                totalCount: number;
+                pageInfo: { hasNextPage: boolean; endCursor: string | null };
+                nodes: { number: number; title: string; url: string; closed: boolean; updatedAt: string; shortDescription?: string | null; items: { totalCount: number } }[];
+              };
+            } | null;
+          }>(LIST_PROJECTS_QUERY, { login: o, first: 50, after: after ?? null });
+          const conn = res.repositoryOwner?.projectsV2;
+          if (!res.repositoryOwner) throw new Error(`'${o}' is not a GitHub user or organization this account can see.`);
+          const nodes = (conn?.nodes ?? []).filter((p) => include_closed || !p.closed);
+          const lines = [`Projects of ${res.repositoryOwner.login} · account: ${acc.login} · ${conn?.totalCount ?? 0} total${include_closed ? "" : " (closed hidden)"}`];
+          for (const p of nodes) {
+            lines.push(`  #${p.number} ${p.title}${p.closed ? " (closed)" : ""} · ${p.items.totalCount} items · updated ${p.updatedAt.slice(0, 10)} · ${p.url}`);
+          }
+          if (!nodes.length) lines.push("  (none)");
+          if (conn?.pageInfo.hasNextPage) lines.push(`More: call again with after="${conn.pageInfo.endCursor}"`);
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        })
+    );
+
+    server.registerTool(
+      "get_project",
+      {
+        description:
+          "Reads a GitHub Project's structure: every field with its type, the options of single-select fields (e.g. Status), iterations with dates (current one marked), linked repositories and view names. Use it to know which field names and values update_project_item accepts.",
+        inputSchema: z.strictObject(projectShape),
+      },
+      async ({ account, owner, number }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          return { content: [{ type: "text", text: `Account: ${rp.accountName}\n${formatProject(rp.project, rp.owner)}` }] };
+        })
+    );
+
+    server.registerTool(
+      "list_project_items",
+      {
+        description:
+          "Lists the items on a GitHub Project board with every field value: type (issue, PR, draft), repository and number, title, state, assignees, Status/Priority/dates/iteration and custom fields. Optional filter by one field value, e.g. 'Status=In progress' ('Status=' for items with no value).",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          filter: z.string().optional().describe("Only items whose field has this value, e.g. 'Status=Done' or 'Priority=High'"),
+          include_archived: z.boolean().default(false).describe("Also list archived items"),
+          after: z.string().optional().describe("Pagination cursor from a previous call"),
+        }),
+      },
+      async ({ account, owner, number, filter, include_archived, after }, ctx) =>
+        withProjectScope(async () => {
+          const f = parseFilter(filter);
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          const res = await rp.octokit.graphql<{
+            node: { items: { totalCount: number; pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: Item[] } } | null;
+          }>(LIST_ITEMS_QUERY, { id: rp.project.id, first: 100, after: after ?? null });
+          const conn = res.node?.items;
+          const nodes = (conn?.nodes ?? []).filter((i) => (include_archived || !i.isArchived) && matchesFilter(i, f));
+          const lines = [
+            `Project ${rp.owner}#${rp.project.number} ${rp.project.title} · account: ${rp.accountName} · ${conn?.totalCount ?? 0} items in total${f ? ` · filter ${f.field}=${f.value || "(empty)"}` : ""}`,
+            `Showing ${nodes.length}${conn?.pageInfo.hasNextPage ? " from this page" : ""}:`,
+            ...nodes.map(formatItem),
+          ];
+          if (!nodes.length) lines.push("  (none)");
+          if (conn?.pageInfo.hasNextPage) lines.push(`More: call again with after="${conn.pageInfo.endCursor}"`);
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        })
+    );
+
+    server.registerTool(
+      "add_project_item",
+      {
+        description:
+          "Adds an item to a GitHub Project board: an existing issue or PR ('item'), or a new draft ('draft_title', optional 'draft_body'). Optionally sets field values right away ('fields', same format as update_project_item). Adding an issue that is already on the board returns the existing item.",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          item: z.string().optional().describe("Existing issue/PR: 'owner/repo#123' or its URL"),
+          draft_title: z.string().optional().describe("Create a draft item with this title instead"),
+          draft_body: z.string().optional().describe("Body of the draft item"),
+          fields: fieldsSchema.optional(),
+        }),
+      },
+      async ({ account, owner, number, item, draft_title, draft_body, fields }, ctx) =>
+        withProjectScope(async () => {
+          if (Boolean(item) === Boolean(draft_title)) throw new Error("Pass either 'item' (an existing issue/PR) or 'draft_title' (a new draft) — exactly one.");
+          if (draft_body && !draft_title) throw new Error("'draft_body' needs 'draft_title'.");
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          if (fields) for (const [k, v] of Object.entries(fields)) resolveValue(rp.project, k, v); // validate before adding
+          let itemId: string;
+          let what: string;
+          if (item) {
+            const parts = parseItemRef(item);
+            if (!parts) throw new Error(`'${item}' is not an issue/PR reference. Use 'owner/repo#123' or its URL.`);
+            const content = await contentOf(rp.octokit, parts);
+            const res = await rp.octokit.graphql<{ addProjectV2ItemById: { item: { id: string } } }>(ADD_ITEM_MUTATION, {
+              projectId: rp.project.id,
+              contentId: content.id,
+            });
+            itemId = res.addProjectV2ItemById.item.id;
+            what = `${parts.owner}/${parts.repo}#${parts.number}`;
+          } else {
+            const res = await rp.octokit.graphql<{ addProjectV2DraftIssue: { projectItem: { id: string } } }>(ADD_DRAFT_MUTATION, {
+              projectId: rp.project.id,
+              title: draft_title,
+              body: draft_body ?? null,
+            });
+            itemId = res.addProjectV2DraftIssue.projectItem.id;
+            what = `draft "${draft_title}"`;
+          }
+          const set = fields ? await setFields(rp, itemId, fields) : [];
+          const lines = [`Added ${what} to project ${rp.owner}#${rp.project.number} (${rp.project.title}) · account: ${rp.accountName}`];
+          if (set.length) lines.push(`Set: ${set.join(" · ")}`);
+          lines.push("Now:", await readItem(rp, itemId));
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        })
+    );
+
+    server.registerTool(
+      "update_project_item",
+      {
+        description:
+          "Changes field values of an item on a GitHub Project board, by field name: Status, Priority, dates, iteration, number, text and custom fields — several at once. Names and options are matched case-insensitively; a wrong name returns the valid ones and changes nothing. null clears a field. Issue fields (labels, assignees, milestone) are not project fields and can't be set here.",
+        inputSchema: z.strictObject({ ...projectShape, item: itemRefSchema, fields: fieldsSchema }),
+      },
+      async ({ account, owner, number, item, fields }, ctx) =>
+        withProjectScope(async () => {
+          if (!Object.keys(fields).length) throw new Error("'fields' is empty — pass at least one field to change.");
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const itemId = await resolveItemId(rp, item);
+          const set = await setFields(rp, itemId, fields);
+          return {
+            content: [{ type: "text", text: [`Updated on project ${rp.owner}#${rp.project.number} · account: ${rp.accountName}`, `Set: ${set.join(" · ")}`, "Now:", await readItem(rp, itemId)].join("\n") }],
+          };
+        })
+    );
+
+    server.registerTool(
+      "move_project_item",
+      {
+        description:
+          "Moves an item on a GitHub Project board: right after another item ('after'), or to the top when 'after' is omitted. Affects views sorted manually (no sort field).",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          item: itemRefSchema,
+          after: z.string().optional().describe("Place the item right after this one (same formats as 'item'). Omit to move it to the top."),
+        }),
+      },
+      async ({ account, owner, number, item, after }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const itemId = await resolveItemId(rp, item);
+          const afterId = after ? await resolveItemId(rp, after) : null;
+          if (afterId === itemId) throw new Error("'item' and 'after' are the same item.");
+          await rp.octokit.graphql(MOVE_ITEM_MUTATION, { projectId: rp.project.id, itemId, afterId });
+          return {
+            content: [{ type: "text", text: `Moved ${after ? `right after ${after}` : "to the top"} on project ${rp.owner}#${rp.project.number} · account: ${rp.accountName}\n${await readItem(rp, itemId)}` }],
+          };
+        })
+    );
+
+    for (const [name, mutation, verb, description] of [
+      ["archive_project_item", ARCHIVE_ITEM_MUTATION, "Archived", "Archives an item on a GitHub Project board: it leaves the views but keeps its field values; unarchive_project_item brings it back."],
+      ["unarchive_project_item", UNARCHIVE_ITEM_MUTATION, "Unarchived", "Brings an archived item back to a GitHub Project board, with its field values."],
+    ] as const) {
+      server.registerTool(
+        name,
+        { description, inputSchema: z.strictObject({ ...projectShape, item: itemRefSchema }) },
+        async ({ account, owner, number, item }, ctx) =>
+          withProjectScope(async () => {
+            const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+            requireWrite(rp);
+            const itemId = await resolveItemId(rp, item);
+            await rp.octokit.graphql(mutation, { projectId: rp.project.id, itemId });
+            return { content: [{ type: "text", text: `${verb} on project ${rp.owner}#${rp.project.number} · account: ${rp.accountName}\n${await readItem(rp, itemId)}` }] };
+          })
+      );
+    }
+
+    server.registerTool(
+      "remove_project_item",
+      {
+        description:
+          "Removes an item from a GitHub Project board. The issue or PR itself is not touched, but the item's field values on this board (Status, dates, etc.) are lost; a draft item is deleted for good. To hide an item without losing anything, use archive_project_item.",
+        inputSchema: z.strictObject({ ...projectShape, item: itemRefSchema }),
+      },
+      async ({ account, owner, number, item }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const itemId = await resolveItemId(rp, item);
+          const before = await readItem(rp, itemId);
+          await rp.octokit.graphql(DELETE_ITEM_MUTATION, { projectId: rp.project.id, itemId });
+          return {
+            content: [{ type: "text", text: `Removed from project ${rp.owner}#${rp.project.number} · account: ${rp.accountName}\nWas:\n${before}\n(The issue/PR itself is unchanged; a draft is deleted.)` }],
+          };
+        })
     );
 
     // ---------- UTILITY ----------
