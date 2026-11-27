@@ -37,16 +37,17 @@ nem fazer deploy de nada pra usar.
 
 ### O que o connector pede ao GitHub
 
-A tela de "Autorizar" pede três permissões (escopos OAuth):
+A tela de "Autorizar" pede quatro permissões (escopos OAuth):
 
 | Escopo | Para quê |
 |---|---|
 | `repo` | Ler e escrever nos repositórios que você acessa: código, branches, PRs, issues, etiquetas, marcos |
 | `project` | Ler e alterar GitHub Projects (boards) |
+| `workflow` | Criar e alterar arquivos de workflow do GitHub Actions (`.github/workflows/`) — o GitHub recusa esses commits sem ele ([ADR 0023](./docs/adr/0023-workflow-scope.md)) |
 | `admin:org` | Alterar os tipos de issue de uma organização (só onde você é dono); também cobre ler os membros da organização |
 
 O GitHub continua conferindo o seu próprio papel em toda chamada: o connector
-nunca faz mais do que você pode fazer. O `admin:org` é o mais amplo dos três —
+nunca faz mais do que você pode fazer. O `admin:org` é o mais amplo dos quatro —
 veja o [ADR 0022](./docs/adr/0022-admin-org-scope.md) para o motivo e o
 [SECURITY.pt-br.md](./SECURITY.pt-br.md) para como os tokens são protegidos.
 Se você conectou antes de um escopo ser adicionado, as ferramentas que
@@ -69,7 +70,7 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 
 - `create_branch` — cria uma branch a partir de outra
 - `delete_branch` — apaga uma branch; recusa a branch padrão, branches protegidas e branches com PR aberto
-- `commit_file` — cria/atualiza um arquivo com uma mensagem de commit (conteúdo inteiro, um arquivo por chamada)
+- `commit_file` — cria/atualiza um arquivo com uma mensagem de commit (conteúdo inteiro, um arquivo por chamada); arquivos de workflow em `.github/workflows/` também funcionam (escopo `workflow`)
 - `patch_file` — aplica um diff unificado a um arquivo existente numa branch, sem reenviar o conteúdo inteiro
 - `get_branch_head` — lê o SHA completo (40 caracteres) do commit que uma branch aponta
 - `read_file` — lê o conteúdo de um arquivo numa branch (`branch`, ou `ref` pra branch, tag ou commit; padrão `main`)
@@ -308,6 +309,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0020 — Gestão de issues via GraphQL: uma gravação atômica, adicionar/remover calculado no servidor](./docs/adr/0020-issue-management-graphql.md)
 - [0021 — Ferramentas de estrutura do board: confirmação antes de apagar, listas de opções e iterações refeitas com os IDs](./docs/adr/0021-board-structure-tools.md)
 - [0022 — `admin:org` no escopo OAuth padrão, para tipos de issue](./docs/adr/0022-admin-org-scope.md)
+- [0023 — `workflow` no escopo OAuth padrão, para arquivos em .github/workflows/](./docs/adr/0023-workflow-scope.md)
 
 ## Licença
 

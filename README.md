@@ -36,16 +36,17 @@ or deploy anything to use it.
 
 ### What the connector asks GitHub for
 
-The "Authorize" screen asks for three permissions (OAuth scopes):
+The "Authorize" screen asks for four permissions (OAuth scopes):
 
 | Scope | Why |
 |---|---|
 | `repo` | Read and write the repositories you can access: code, branches, PRs, issues, labels, milestones |
 | `project` | Read and change GitHub Projects (boards) |
+| `workflow` | Create and change GitHub Actions workflow files (`.github/workflows/`) — GitHub refuses those commits without it ([ADR 0023](./docs/adr/0023-workflow-scope.md)) |
 | `admin:org` | Change an organization's issue types (only where you are an owner); it also covers reading organization membership |
 
 GitHub still checks your own role on every call: the connector can never do
-more than you can. `admin:org` is the broadest of the three — see
+more than you can. `admin:org` is the broadest of the four — see
 [ADR 0022](./docs/adr/0022-admin-org-scope.md) for why it is requested and
 [SECURITY.md](./SECURITY.md) for how tokens are protected. If you connected
 before a scope was added, the tools that need it tell you to reconnect.
@@ -67,7 +68,7 @@ target. See [Available tools](#available-tools) below.
 
 - `create_branch` — creates a branch from another one
 - `delete_branch` — deletes a branch; refuses the default branch, protected branches and branches with an open PR
-- `commit_file` — creates/updates a file with a commit message (full content, one file per call)
+- `commit_file` — creates/updates a file with a commit message (full content, one file per call); workflow files under `.github/workflows/` work too (`workflow` scope)
 - `patch_file` — applies a unified diff to an existing file on a branch, without resending the whole content
 - `get_branch_head` — reads the full (40-character) SHA of the commit a branch points to
 - `read_file` — reads a file's content on a branch (`branch`, or `ref` for a branch, tag or commit; default `main`)
@@ -301,6 +302,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0020 — Issue management via GraphQL: one atomic write, add/remove computed server-side](./docs/adr/0020-issue-management-graphql.md)
 - [0021 — Board structure tools: confirmation before deletes, option and iteration lists rebuilt with their IDs](./docs/adr/0021-board-structure-tools.md)
 - [0022 — `admin:org` in the default OAuth scope, for issue types](./docs/adr/0022-admin-org-scope.md)
+- [0023 — `workflow` in the default OAuth scope, for files under .github/workflows/](./docs/adr/0023-workflow-scope.md)
 
 ## License
 
