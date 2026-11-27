@@ -75,3 +75,17 @@ is shared between companies; none of them leaves code or file names on it.
 - PR totals use the creation date; merged counts are the authored PRs that
   were merged.
 - Costs stay on each account's own token (5,000 REST calls per hour).
+
+## Addendum (2026-11-27, issue #102): merge commits
+
+The live validation of #100 showed every merged PR counted twice: commit
+search returns merge commits made on GitHub's UI, and GitHub reports each one
+with the same lines as the commits it merges (2026-11-26 on `github-mcp`:
+real change +1,892, breakdown +3,784).
+
+Decision (maintainer): a commit with more than one parent is a merge commit.
+Merge commits are left out of every total (totals, by repository, by month)
+and reported on their own line ("N merge commits — not summed"). Their lines
+are never fetched, which also saves one GitHub call per merge. Discovery
+lists cached before this change do not carry the merge flag, so the commit
+discovery key moved to a new version (`commits-v2`) and old lists are ignored.

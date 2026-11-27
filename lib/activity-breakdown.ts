@@ -59,13 +59,16 @@ export function discoveryTtlSeconds(s: Slice, now = Date.now()): number {
 
 // ---------- Items ----------
 
-export type CommitItem = { repo: string; sha: string; date: string; private: boolean };
+// `merge`: more than one parent. Merge commits made on GitHub repeat the lines
+// of the commits they merge, so they are counted apart and never summed.
+export type CommitItem = { repo: string; sha: string; date: string; private: boolean; merge?: boolean };
 export type PrItem = { repo: string; number: number; created: string; merged: string | null; state: string; private: boolean };
 
 // ---------- Aggregation ----------
 
 type Bucket = {
   commits: number;
+  merges: number;
   measuredCommits: number;
   additions: number;
   deletions: number;
@@ -80,6 +83,7 @@ type Bucket = {
 
 const empty = (): Bucket => ({
   commits: 0,
+  merges: 0,
   measuredCommits: 0,
   additions: 0,
   deletions: 0,
@@ -123,6 +127,10 @@ export function aggregate(
   };
 
   for (const c of commits) {
+    if (c.merge) {
+      for (const b of buckets(c.repo, c.private, c.date)) b.merges += 1;
+      continue;
+    }
     const s = commitStats.get(`${c.repo}@${c.sha}`);
     for (const b of buckets(c.repo, c.private, c.date)) {
       b.commits += 1;
@@ -162,6 +170,7 @@ function row(b: Bucket): string {
       b.measuredPrs < b.prs ? ` (${n(b.measuredPrs)} measured)` : ""
     }`
   );
+  if (b.merges) parts.push(`${n(b.merges)} merge commits not summed`);
   return parts.join(" · ");
 }
 
@@ -192,6 +201,9 @@ export function formatBreakdown(login: string, from: string, to: string, b: Brea
     lines.push(`  Note: more than ${SEARCH_RESULT_CAP} results on ${s} (a single day) — GitHub's search cap; that day is incomplete.`);
   }
   lines.push("", `Totals: ${row(t)}`);
+  if (t.merges) {
+    lines.push(`Merge commits: ${n(t.merges)} — not summed (GitHub reports a merge with the same lines as the commits it merges)`);
+  }
 
   const repos = [...b.byRepo.entries()].sort(([, x], [, y]) => y.additions + y.deletions + y.prAdditions + y.prDeletions - (x.additions + x.deletions + x.prAdditions + x.prDeletions) || y.commits - x.commits);
   lines.push("", `By repository (${repos.length}):`);

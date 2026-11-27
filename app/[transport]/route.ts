@@ -468,7 +468,7 @@ type Discovery<T> = { items: T[]; pending: number; truncated: string[]; rateLimi
 async function discover<T>(
   cache: StatsCache,
   login: string,
-  kind: "commits" | "prs",
+  kind: string,
   owner: string,
   slices: Slice[],
   budget: { left: number },
@@ -1648,7 +1648,8 @@ const rawHandler = createMcpHandler(
             await perAccountSection(acc, primaryLogin, async () => {
               const budget = { left: SEARCHES_PER_CALL };
               const hitsBefore = cache.hits;
-              const commits = await discover<CommitItem>(cache, acc.login, "commits", owner ?? "", slices, budget, async (s, page) => {
+              // "commits-v2": lists cached before merges were flagged (issue #102) are ignored.
+              const commits = await discover<CommitItem>(cache, acc.login, "commits-v2", owner ?? "", slices, budget, async (s, page) => {
                 const res = await acc.octokit.search.commits({
                   q: `author:${acc.login} author-date:${s.from}..${s.to}${ownerQ}`,
                   sort: "author-date",
@@ -1663,6 +1664,7 @@ const rawHandler = createMcpHandler(
                     sha: it.sha,
                     date: it.commit.author?.date ?? `${s.from}T00:00:00Z`,
                     private: Boolean(it.repository.private),
+                    merge: (it.parents?.length ?? 0) > 1,
                   })),
                 };
               });
@@ -1698,7 +1700,8 @@ const rawHandler = createMcpHandler(
               const privateRepos = new Set(commitItems.filter((c) => c.private).map((c) => c.repo));
               const prItems = prs.items.map((p) => ({ ...p, private: privateRepos.has(p.repo) }));
 
-              const commitStats = await fetchCommitStats(acc.octokit, cache, commitItems, deadline);
+              // Merge commits are not summed, so their lines are never fetched.
+              const commitStats = await fetchCommitStats(acc.octokit, cache, commitItems.filter((c) => !c.merge), deadline);
               const prStats = await fetchPrStats(
                 acc.octokit,
                 cache,
