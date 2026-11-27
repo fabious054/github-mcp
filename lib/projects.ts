@@ -9,7 +9,7 @@ export const PROJECT_FIELDS_FRAGMENT = `
     nodes {
       __typename
       ... on ProjectV2FieldCommon { id name dataType }
-      ... on ProjectV2SingleSelectField { options { id name description } }
+      ... on ProjectV2SingleSelectField { options { id name color description } }
       ... on ProjectV2IterationField {
         configuration {
           duration
@@ -142,7 +142,7 @@ export type Field = {
   id: string;
   name: string;
   dataType: string;
-  options?: { id: string; name: string; description?: string | null }[];
+  options?: { id: string; name: string; color?: string | null; description?: string | null }[];
   configuration?: { duration: number; iterations: Iteration[]; completedIterations: Iteration[] };
 };
 

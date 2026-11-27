@@ -68,6 +68,13 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `move_project_item` — move um item para depois de outro, ou para o topo
 - `archive_project_item` / `unarchive_project_item` — arquiva ou restaura um item (mantém os campos)
 - `remove_project_item` — tira um item do board (a issue/PR em si não muda) — as ferramentas de board precisam do escopo `project`: veja o [ADR 0019](./docs/adr/0019-projects-v2-board-tools.md)
+- `create_project` / `update_project` — cria um board (opcionalmente já vinculado a um repositório); edita título, descrição, README, visibilidade, fecha ou reabre
+- `delete_project` — apaga um board; sem `confirm: true` só mostra o que seria perdido
+- `link_project_repo` / `unlink_project_repo` — vincula ou desvincula um repositório
+- `copy_project` / `set_project_template` — copia um board (ex.: um template) para um novo; marca ou desmarca como template
+- `create_project_field` — adiciona um campo de texto, número, data, seleção (com opções) ou iteração
+- `update_project_field` — renomeia um campo; adiciona, renomeia, muda a cor ou remove opções (inclusive do Status); edita iterações (adicionar, renomear, reagendar, remover) — remoções mostram o impacto antes e exigem `confirm: true`: veja o [ADR 0021](./docs/adr/0021-board-structure-tools.md)
+- `delete_project_field` — apaga um campo personalizado; sem `confirm: true` só mostra quantos itens têm valor nele
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão
@@ -240,6 +247,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0018 — Divisão de atividade por partes, com cache que preserva privacidade](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
 - [0019 — Ferramentas de board (Projects v2): escopo `project`, campos pelo nome](./docs/adr/0019-projects-v2-board-tools.md)
 - [0020 — Gestão de issues via GraphQL: uma gravação atômica, adicionar/remover calculado no servidor](./docs/adr/0020-issue-management-graphql.md)
+- [0021 — Ferramentas de estrutura do board: confirmação antes de apagar, listas de opções e iterações refeitas com os IDs](./docs/adr/0021-board-structure-tools.md)
 
 ## Licença
 

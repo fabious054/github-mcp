@@ -67,6 +67,13 @@ target. See [Available tools](#available-tools) below.
 - `move_project_item` — moves an item after another one, or to the top
 - `archive_project_item` / `unarchive_project_item` — archives or restores an item (keeps its fields)
 - `remove_project_item` — removes an item from a board (the issue/PR itself is untouched) — board tools need the `project` scope: see [ADR 0019](./docs/adr/0019-projects-v2-board-tools.md)
+- `create_project` / `update_project` — creates a board (optionally linked to a repository); edits title, description, README, visibility, closes or reopens it
+- `delete_project` — deletes a board; without `confirm: true` it only reports what would be lost
+- `link_project_repo` / `unlink_project_repo` — links or unlinks a repository
+- `copy_project` / `set_project_template` — copies a board (e.g. a template) into a new one; marks or unmarks a template
+- `create_project_field` — adds a text, number, date, single-select (with options) or iteration field
+- `update_project_field` — renames a field; adds, renames, recolors or removes options (Status included); edits iterations (add, rename, reschedule, remove) — removals report the impact first and need `confirm: true`: see [ADR 0021](./docs/adr/0021-board-structure-tools.md)
+- `delete_project_field` — deletes a custom field; without `confirm: true` it only reports how many items have a value
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
@@ -234,6 +241,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0018 — Activity breakdown in batches with a privacy-preserving cache](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
 - [0019 — Projects (v2) board tools: `project` scope, fields by name](./docs/adr/0019-projects-v2-board-tools.md)
 - [0020 — Issue management via GraphQL: one atomic write, add/remove computed server-side](./docs/adr/0020-issue-management-graphql.md)
+- [0021 — Board structure tools: confirmation before deletes, option and iteration lists rebuilt with their IDs](./docs/adr/0021-board-structure-tools.md)
 
 ## License
 
