@@ -66,10 +66,12 @@ export const ITEM_FIELDS_FRAGMENT = `
     }
   }`;
 
-export const LIST_ITEMS_QUERY = `query($id: ID!, $first: Int!, $after: String) {
+// `ProjectV2.items` returns only non-archived items unless `archivedStates`
+// asks for archived ones too (GitHub default: [NOT_ARCHIVED]) — issue #107.
+export const LIST_ITEMS_QUERY = `query($id: ID!, $first: Int!, $after: String, $archivedStates: [ProjectV2ItemArchivedState!]) {
   node(id: $id) {
     ... on ProjectV2 {
-      items(first: $first, after: $after) {
+      items(first: $first, after: $after, archivedStates: $archivedStates) {
         totalCount
         pageInfo { hasNextPage endCursor }
         nodes { ${ITEM_FIELDS_FRAGMENT} }
@@ -77,6 +79,13 @@ export const LIST_ITEMS_QUERY = `query($id: ID!, $first: Int!, $after: String) {
     }
   }
 }`;
+
+export type ArchivedState = "ARCHIVED" | "NOT_ARCHIVED";
+
+// Value of `archivedStates` for LIST_ITEMS_QUERY.
+export function archivedStatesFor(includeArchived: boolean): ArchivedState[] {
+  return includeArchived ? ["NOT_ARCHIVED", "ARCHIVED"] : ["NOT_ARCHIVED"];
+}
 
 export const CONTENT_ID_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
