@@ -3036,6 +3036,231 @@ const rawHandler = createMcpHandler(
         })
     );
 
+    // ---------- VIEWS AND STATUS UPDATES (issue #125, ADR 0021) ----------
+
+    const projectViews = async (rp: ResolvedProject): Promise<View[]> => {
+      const res = await rp.octokit.graphql<{ node: { views?: { nodes: View[] } } | null }>(PROJECT_VIEWS_QUERY, { id: rp.project.id });
+      return res.node?.views?.nodes ?? [];
+    };
+    const viewRefSchema = z.string().describe("The view: its name or its number (e.g. 'Sprint board' or '2')");
+    const visibleFieldsSchema = z
+      .array(z.string())
+      .optional()
+      .describe("The full list of fields to show, by name, in order (e.g. ['Title', 'Status', 'Assignees']); fields left out are hidden");
+
+    server.registerTool(
+      "list_project_views",
+      {
+        description: `Lists a GitHub Project's views: number, name, layout (table / board / roadmap), filter and visible fields. ${VIEW_API_LIMIT}`,
+        inputSchema: z.strictObject({ ...projectShape }),
+      },
+      async ({ account, owner, number }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          const views = await projectViews(rp);
+          const lines = [`${views.length} view(s) in project ${rp.owner}#${number} "${rp.project.title}" · account: ${rp.accountName}`, ...views.map((v) => `  ${formatView(v)}`)];
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        })
+    );
+
+    server.registerTool(
+      "create_project_view",
+      {
+        description: `Adds a view to a GitHub Project: name, layout (table, board or roadmap; default table), optional filter (same syntax as the filter bar, e.g. 'status:Todo assignee:@me') and visible fields. ${VIEW_API_LIMIT}`,
+        inputSchema: z.strictObject({
+          ...projectShape,
+          name: z.string().describe("View name"),
+          layout: z.enum(VIEW_LAYOUTS).default("table"),
+          filter: z.string().optional().describe("Filter, as typed in the project's filter bar"),
+          visible_fields: visibleFieldsSchema,
+        }),
+      },
+      async ({ account, owner, number, name, layout, filter, visible_fields }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const views = await projectViews(rp);
+          const n = checkViewName(views, name, rp.project.title);
+          const fieldIds = visible_fields ? resolveVisibleFields(rp.project.fields.nodes, visible_fields, rp.project.title) : undefined;
+          const input: Record<string, unknown> = { projectId: rp.project.id, name: n, layout: layoutEnum(layout) };
+          if (fieldIds) input.configuration = { visibleFieldIds: fieldIds.map((f) => f.id) };
+          const res = await rp.octokit.graphql<{ createProjectV2View: { projectV2View: View } }>(CREATE_VIEW_MUTATION, { input });
+          let view = res.createProjectV2View.projectV2View;
+          const head = `View created on project ${rp.owner}#${number} · account: ${rp.accountName}`;
+          // GitHub's create mutation has no filter: it is set right after, in a second call.
+          if (filter !== undefined && filter.trim()) {
+            try {
+              const up = await rp.octokit.graphql<{ updateProjectV2View: { projectV2View: View } }>(UPDATE_VIEW_MUTATION, { input: { viewId: view.id, filter } });
+              view = up.updateProjectV2View.projectV2View;
+            } catch (err) {
+              const msg = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ");
+              return { content: [{ type: "text", text: `${head}\n  ${formatView(view)}\nThe filter was NOT applied (${msg}). Set it with update_project_view.` }], isError: true };
+            }
+          }
+          return { content: [{ type: "text", text: `${head}\n  ${formatView(view)}\n${VIEW_API_LIMIT}` }] };
+        })
+    );
+
+    server.registerTool(
+      "update_project_view",
+      {
+        description: `Changes a view of a GitHub Project: new name, layout, filter ('' clears it), visible fields (the full list, in order). Pass only what changes. ${VIEW_API_LIMIT}`,
+        inputSchema: z.strictObject({
+          ...projectShape,
+          view: viewRefSchema,
+          new_name: z.string().optional(),
+          layout: z.enum(VIEW_LAYOUTS).optional(),
+          filter: z.string().optional().describe("New filter; '' clears it"),
+          visible_fields: visibleFieldsSchema,
+        }),
+      },
+      async ({ account, owner, number, view, new_name, layout, filter, visible_fields }, ctx) =>
+        withProjectScope(async () => {
+          if ([new_name, layout, filter, visible_fields].every((v) => v === undefined)) throw new Error("update_project_view needs at least one change: new_name, layout, filter or visible_fields.");
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const views = await projectViews(rp);
+          const current = findView(views, view, rp.project.title);
+          const input: Record<string, unknown> = { viewId: current.id };
+          if (new_name !== undefined) input.name = checkViewName(views, new_name, rp.project.title, current);
+          if (layout !== undefined) input.layout = layoutEnum(layout);
+          if (filter !== undefined) input.filter = filter;
+          if (visible_fields !== undefined) input.configuration = { visibleFieldIds: resolveVisibleFields(rp.project.fields.nodes, visible_fields, rp.project.title).map((f) => f.id) };
+          const res = await rp.octokit.graphql<{ updateProjectV2View: { projectV2View: View } }>(UPDATE_VIEW_MUTATION, { input });
+          return {
+            content: [{ type: "text", text: `View updated on project ${rp.owner}#${number} · account: ${rp.accountName}\n  before: ${formatView(current)}\n  after:  ${formatView(res.updateProjectV2View.projectV2View)}` }],
+          };
+        })
+    );
+
+    server.registerTool(
+      "delete_project_view",
+      {
+        description: "Deletes a view from a GitHub Project. Items and field values are not touched; only the view's layout, filter and field selection are lost. Without confirm: true it only reports what would be lost.",
+        inputSchema: z.strictObject({ ...projectShape, view: viewRefSchema, confirm: confirmSchema }),
+      },
+      async ({ account, owner, number, view, confirm }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const views = await projectViews(rp);
+          const v = findView(views, view, rp.project.title);
+          if (views.length === 1) throw new Error(`'${v.name}' is the only view of project '${rp.project.title}'; a project needs at least one. Nothing was changed.`);
+          const impact = `view ${formatView(v)} from project ${rp.owner}#${number} (items and their values stay)`;
+          if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
+          await rp.octokit.graphql(DELETE_VIEW_MUTATION, { id: v.id });
+          return { content: [{ type: "text", text: `Deleted ${impact} · account: ${rp.accountName}` }] };
+        })
+    );
+
+    const projectStatusUpdates = async (rp: ResolvedProject, first: number) => {
+      const res = await rp.octokit.graphql<{ node: { statusUpdates?: { totalCount: number; nodes: StatusUpdate[] } } | null }>(STATUS_UPDATES_QUERY, { id: rp.project.id, first });
+      return res.node?.statusUpdates ?? { totalCount: 0, nodes: [] };
+    };
+    const statusSchema = z.enum(STATUS_VALUES).describe("on_track, at_risk, off_track, inactive or complete");
+    const statusRefSchema = z.string().describe("'latest' (the most recent update) or an ID (PVTSU_…) from list_project_status_updates");
+
+    server.registerTool(
+      "list_project_status_updates",
+      {
+        description: "Lists a GitHub Project's status updates, newest first: status (on track / at risk / off track / inactive / complete), start and target dates, text, author and ID.",
+        inputSchema: z.strictObject({ ...projectShape, limit: z.number().int().min(1).max(50).default(10) }),
+      },
+      async ({ account, owner, number, limit }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          const su = await projectStatusUpdates(rp, limit);
+          const lines = [`${su.totalCount} status update(s) on project ${rp.owner}#${number} "${rp.project.title}"${su.totalCount > su.nodes.length ? ` (newest ${su.nodes.length} shown)` : ""} · account: ${rp.accountName}`];
+          lines.push(...(su.nodes.length ? su.nodes.map((u) => `  ${formatStatusUpdate(u)}`) : ["  (none)"]));
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        })
+    );
+
+    server.registerTool(
+      "create_project_status_update",
+      {
+        description: "Posts a status update on a GitHub Project: status (on_track, at_risk, off_track, inactive, complete), optional start and target dates (YYYY-MM-DD) and text (Markdown). The newest update is the project's current status.",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          status: statusSchema,
+          body: z.string().optional().describe("Text of the update (Markdown)"),
+          start_date: z.string().optional().describe("YYYY-MM-DD"),
+          target_date: z.string().optional().describe("YYYY-MM-DD"),
+        }),
+      },
+      async ({ account, owner, number, status, body, start_date, target_date }, ctx) =>
+        withProjectScope(async () => {
+          const start = parseDate(start_date, "start_date");
+          const target = parseDate(target_date, "target_date");
+          if (start && target && target < start) throw new Error(`target_date (${target}) is before start_date (${start}). Nothing was changed.`);
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const input: Record<string, unknown> = { projectId: rp.project.id, status: statusEnum(status) };
+          if (body !== undefined) input.body = body;
+          if (start) input.startDate = start;
+          if (target) input.targetDate = target;
+          const res = await rp.octokit.graphql<{ createProjectV2StatusUpdate: { statusUpdate: StatusUpdate } }>(CREATE_STATUS_MUTATION, { input });
+          return { content: [{ type: "text", text: `Status update posted on project ${rp.owner}#${number} · account: ${rp.accountName}\n  ${formatStatusUpdate(res.createProjectV2StatusUpdate.statusUpdate)}` }] };
+        })
+    );
+
+    server.registerTool(
+      "update_project_status_update",
+      {
+        description: "Edits a GitHub Project status update ('latest' or its ID): status, text, start and target dates (null clears a date). Pass only what changes.",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          status_update: statusRefSchema,
+          status: statusSchema.optional(),
+          body: z.string().optional().describe("New text; replaces the current one"),
+          start_date: z.string().nullable().optional().describe("YYYY-MM-DD, or null to clear"),
+          target_date: z.string().nullable().optional().describe("YYYY-MM-DD, or null to clear"),
+        }),
+      },
+      async ({ account, owner, number, status_update, status, body, start_date, target_date }, ctx) =>
+        withProjectScope(async () => {
+          if ([status, body, start_date, target_date].every((v) => v === undefined)) throw new Error("update_project_status_update needs at least one change: status, body, start_date or target_date.");
+          const start = parseDate(start_date, "start_date");
+          const target = parseDate(target_date, "target_date");
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const current = findStatusUpdate((await projectStatusUpdates(rp, 50)).nodes, status_update, rp.project.title);
+          const effStart = start === undefined ? current.startDate : start;
+          const effTarget = target === undefined ? current.targetDate : target;
+          if (effStart && effTarget && effTarget < effStart) throw new Error(`target_date (${effTarget}) would be before start_date (${effStart}). Nothing was changed.`);
+          const input: Record<string, unknown> = { statusUpdateId: current.id };
+          if (status !== undefined) input.status = statusEnum(status);
+          if (body !== undefined) input.body = body;
+          if (start !== undefined) input.startDate = start;
+          if (target !== undefined) input.targetDate = target;
+          const res = await rp.octokit.graphql<{ updateProjectV2StatusUpdate: { statusUpdate: StatusUpdate } }>(UPDATE_STATUS_MUTATION, { input });
+          return {
+            content: [{ type: "text", text: `Status update edited on project ${rp.owner}#${number} · account: ${rp.accountName}\n  before: ${formatStatusUpdate(current)}\n  after:  ${formatStatusUpdate(res.updateProjectV2StatusUpdate.statusUpdate)}` }],
+          };
+        })
+    );
+
+    server.registerTool(
+      "delete_project_status_update",
+      {
+        description: "Deletes a GitHub Project status update ('latest' or its ID); the previous update, if any, becomes the current status. Without confirm: true it only shows what would be deleted.",
+        inputSchema: z.strictObject({ ...projectShape, status_update: statusRefSchema, confirm: confirmSchema }),
+      },
+      async ({ account, owner, number, status_update, confirm }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const all = (await projectStatusUpdates(rp, 50)).nodes;
+          const u = findStatusUpdate(all, status_update, rp.project.title);
+          const next = all[0]?.id === u.id ? all[1] : undefined;
+          const after = all[0]?.id === u.id ? `; the current status becomes ${next ? `${next.status?.toLowerCase() ?? "no status"} (${next.createdAt.slice(0, 10)})` : "empty (no updates left)"}` : "";
+          const impact = `status update ${formatStatusUpdate(u)}\n  from project ${rp.owner}#${number}${after}`;
+          if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
+          await rp.octokit.graphql(DELETE_STATUS_MUTATION, { id: u.id });
+          return { content: [{ type: "text", text: `Deleted ${impact} · account: ${rp.accountName}` }] };
+        })
+    );
+
     // ---------- LABELS, MILESTONES, ISSUE TYPES (issue #121, ADR 0021) ----------
 
     server.registerTool(
