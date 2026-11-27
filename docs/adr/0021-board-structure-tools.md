@@ -99,6 +99,8 @@ Two properties of GitHub's GraphQL API shape the design:
   filter (the same honesty rule as multi-call writes in phases 1–2).
 - **Visible fields are the full list, in order**, by name; unknown names are
   refused with the valid ones. A project's last view can't be deleted.
+  Roadmap views don't accept visible fields (GitHub refuses them); the tools
+  refuse that combination before writing (found in the live run, #127).
 - **Status updates are identified by `latest` or by ID.** They have no name
   or number, so `list_project_status_updates` shows each ID. Deleting the
   newest update reports which update becomes the current status.

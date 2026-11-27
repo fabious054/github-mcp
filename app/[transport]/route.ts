@@ -196,6 +196,7 @@ import {
   UPDATE_VIEW_MUTATION,
   VIEW_API_LIMIT,
   VIEW_LAYOUTS,
+  checkLayoutFields,
   checkViewName,
   findStatusUpdate,
   findView,
@@ -3046,7 +3047,7 @@ const rawHandler = createMcpHandler(
     const visibleFieldsSchema = z
       .array(z.string())
       .optional()
-      .describe("The full list of fields to show, by name, in order (e.g. ['Title', 'Status', 'Assignees']); fields left out are hidden");
+      .describe("The full list of fields to show, by name, in order (e.g. ['Title', 'Status', 'Assignees']); fields left out are hidden. Not allowed on roadmap views (a GitHub rule)");
 
     server.registerTool(
       "list_project_views",
@@ -3081,6 +3082,7 @@ const rawHandler = createMcpHandler(
           requireWrite(rp);
           const views = await projectViews(rp);
           const n = checkViewName(views, name, rp.project.title);
+          checkLayoutFields(layout, visible_fields);
           const fieldIds = visible_fields ? resolveVisibleFields(rp.project.fields.nodes, visible_fields, rp.project.title) : undefined;
           const input: Record<string, unknown> = { projectId: rp.project.id, name: n, layout: layoutEnum(layout) };
           if (fieldIds) input.configuration = { visibleFieldIds: fieldIds.map((f) => f.id) };
@@ -3121,6 +3123,7 @@ const rawHandler = createMcpHandler(
           requireWrite(rp);
           const views = await projectViews(rp);
           const current = findView(views, view, rp.project.title);
+          checkLayoutFields(layout ?? current.layout, visible_fields);
           const input: Record<string, unknown> = { viewId: current.id };
           if (new_name !== undefined) input.name = checkViewName(views, new_name, rp.project.title, current);
           if (layout !== undefined) input.layout = layoutEnum(layout);
