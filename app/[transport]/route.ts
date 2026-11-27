@@ -105,6 +105,30 @@ import {
   type Item,
   type Project,
 } from "../../lib/projects";
+import {
+  ADD_SUB_ISSUE_MUTATION,
+  ASSIGNABLE_USERS_QUERY,
+  CREATE_ISSUE_MUTATION,
+  ISSUE_REF_QUERY,
+  ISSUE_VIEW_QUERY,
+  REMOVE_SUB_ISSUE_MUTATION,
+  REPO_CONTEXT_QUERY,
+  UPDATE_ISSUE_COMMENT_MUTATION,
+  UPDATE_ISSUE_MUTATION,
+  UPDATE_REVIEW_COMMENT_MUTATION,
+  applyAddRemove,
+  checkCommentKind,
+  diffIssue,
+  formatIssue,
+  overlap,
+  parseIssueRef,
+  planState,
+  resolveLabels,
+  resolveMilestone,
+  resolveType,
+  type IssueView,
+  type RepoContext,
+} from "../../lib/issues";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -587,6 +611,57 @@ async function withProjectScope<T>(fn: () => Promise<T>): Promise<T> {
     throw err;
   }
 }
+
+// ---------- Issue helpers (issue #109, ADR 0020) ----------
+
+async function repoContext(octokit: Octokit, owner: string, repo: string, number: number | null): Promise<RepoContext> {
+  const res = await octokit.graphql<{ repository: RepoContext | null }>(REPO_CONTEXT_QUERY, {
+    owner,
+    name: repo,
+    number: number ?? 0,
+    withIssue: number !== null,
+  });
+  const ctx = res.repository;
+  if (!ctx) throw new Error(`Repository ${owner}/${repo} was not found, or this account can't see it.`);
+  if (number !== null && !ctx.issue) throw new Error(`Issue ${owner}/${repo}#${number} was not found (or it is a pull request).`);
+  return ctx;
+}
+
+// Every login must be assignable in the repository; all unknown ones are
+// reported at once and nothing is written.
+async function resolveAssignees(octokit: Octokit, owner: string, repo: string, logins: string[]): Promise<{ id: string; login: string }[]> {
+  const out: { id: string; login: string }[] = [];
+  const missing: string[] = [];
+  for (const login of logins) {
+    const res = await octokit.graphql<{ repository: { assignableUsers: { nodes: { id: string; login: string }[] } } | null }>(
+      ASSIGNABLE_USERS_QUERY,
+      { owner, name: repo, q: login.replace(/^@/, "") }
+    );
+    const hit = res.repository?.assignableUsers.nodes.find((u) => u.login.toLowerCase() === login.replace(/^@/, "").toLowerCase());
+    if (hit) out.push(hit);
+    else missing.push(login);
+  }
+  if (missing.length) {
+    throw new Error(
+      `${missing.map((m) => `'${m}'`).join(", ")} can't be assigned in ${owner}/${repo} (not a collaborator, or no such user). Nothing was changed.`
+    );
+  }
+  return out;
+}
+
+async function issueRefId(octokit: Octokit, ref: string, owner: string, repo: string, what: string): Promise<{ id: string; label: string }> {
+  const parts = parseIssueRef(ref, owner, repo);
+  if (!parts) throw new Error(`'${ref}' is not an issue reference for ${what}. Use '#12', 'owner/repo#12' or the issue URL.`);
+  const res = await octokit.graphql<{ repository: { issue: { id: string; number: number; repository: { nameWithOwner: string } } | null } | null }>(
+    ISSUE_REF_QUERY,
+    { owner: parts.owner, name: parts.repo, number: parts.number }
+  );
+  const issue = res.repository?.issue;
+  if (!issue) throw new Error(`${what}: issue ${parts.owner}/${parts.repo}#${parts.number} was not found (or it is a pull request, or this account can't see it).`);
+  return { id: issue.id, label: `${issue.repository.nameWithOwner}#${issue.number}` };
+}
+
+const nonEmpty = (xs: string[] | undefined) => (xs && xs.length ? xs : undefined);
 
 // ---------- Activity breakdown helpers (ADR 0018) ----------
 
@@ -1272,6 +1347,65 @@ const rawHandler = createMcpHandler(
       }
     );
 
+    server.registerTool(
+      "list_pr_comments",
+      {
+        description:
+          "Lists a Pull Request's comments with their IDs: conversation comments (IC_…) and inline review comments on the code (PRRC_…, with file and line). Use the IDs with edit_comment.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          pr_number: z.number().int().describe("PR number"),
+        }),
+      },
+      async ({ account, owner, repo, pr_number }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const conv = await octokit.paginate(octokit.issues.listComments, { owner: o, repo: r, issue_number: pr_number, per_page: 100 });
+        const review = await octokit.paginate(octokit.pulls.listReviewComments, { owner: o, repo: r, pull_number: pr_number, per_page: 100 });
+        const lines = [`PR ${o}/${r}#${pr_number} · account: ${accountName}`, "", `Conversation comments (${conv.length}) — kind 'conversation':`];
+        if (!conv.length) lines.push("  (none)");
+        for (const c of conv) lines.push(`— ${c.user?.login ?? "unknown"} (${c.created_at}) · id ${c.node_id}:\n${c.body ?? ""}`);
+        lines.push("", `Inline review comments (${review.length}) — kind 'review':`);
+        if (!review.length) lines.push("  (none)");
+        for (const c of review) {
+          const where = `${c.path}${c.line ?? c.original_line ? `:${c.line ?? c.original_line}` : ""}${c.line == null ? " (outdated)" : ""}`;
+          lines.push(`— ${c.user?.login ?? "unknown"} (${c.created_at}) on ${where} · id ${c.node_id}${c.in_reply_to_id ? " · reply" : ""}:\n${c.body ?? ""}`);
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "edit_comment",
+      {
+        description:
+          "Replaces the text of an existing comment in the repository owner/repo (used to pick the account). kind 'conversation': issue comments and PR conversation comments (IDs IC_… from get_issue / list_pr_comments); kind 'review': PR inline review comments on the code (IDs PRRC_… from list_pr_comments).",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          comment_id: z.string().describe("The comment's ID (IC_… or PRRC_…), as shown by get_issue or list_pr_comments"),
+          kind: z.enum(["conversation", "review"]).describe("'conversation' for IC_… IDs, 'review' for PRRC_… IDs"),
+          body: z.string().min(1).describe("New comment text — replaces the current one entirely"),
+        }),
+      },
+      async ({ account, owner, repo, comment_id, kind, body }, ctx) => {
+        checkCommentKind(comment_id, kind);
+        const { octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        if (kind === "conversation") {
+          const res = await octokit.graphql<{ updateIssueComment: { issueComment: { url: string } } }>(UPDATE_ISSUE_COMMENT_MUTATION, {
+            id: comment_id.trim(),
+            body,
+          });
+          return { content: [{ type: "text", text: `Comment edited · account: ${accountName}: ${res.updateIssueComment.issueComment.url}` }] };
+        }
+        const res = await octokit.graphql<{ updatePullRequestReviewComment: { pullRequestReviewComment: { url: string } } }>(
+          UPDATE_REVIEW_COMMENT_MUTATION,
+          { id: comment_id.trim(), body }
+        );
+        return {
+          content: [{ type: "text", text: `Review comment edited · account: ${accountName}: ${res.updatePullRequestReviewComment.pullRequestReviewComment.url}` }],
+        };
+      }
+    );
+
     // ---------- ISSUES / BOARD ----------
 
     server.registerTool(
@@ -1296,7 +1430,8 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "get_issue",
       {
-        description: "Brings back an issue's full content: description and every comment, in the order they were posted — to understand the history and reasoning behind it, not just the title.",
+        description:
+          "Brings back an issue's full content: state (with close reason), labels, assignees, milestone, type, parent issue and sub-issues, the description, and every comment in the order they were posted, each with its ID (IC_…) for edit_comment — to understand the history and reasoning behind it, not just the title.",
         inputSchema: z.strictObject({
           ...ownerRepoShape,
           issue_number: z.number().int().describe("Issue/task number"),
@@ -1304,9 +1439,16 @@ const rawHandler = createMcpHandler(
       },
       async ({ account, owner, repo, issue_number }, ctx) => {
         const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
-        const issue = await octokit.issues.get({ owner: o, repo: r, issue_number });
+        const view = await octokit.graphql<{ repository: { issue: IssueView | null } | null }>(ISSUE_VIEW_QUERY, {
+          owner: o,
+          name: r,
+          number: issue_number,
+        });
+        const issue = view.repository?.issue;
+        if (!issue) throw new Error(`Issue ${o}/${r}#${issue_number} was not found (or it is a pull request).`);
+        const meta = await octokit.issues.get({ owner: o, repo: r, issue_number });
 
-        const comments: { user?: { login?: string | null } | null; created_at: string; body?: string | null }[] = [];
+        const comments: { node_id: string; user?: { login?: string | null } | null; created_at: string; body?: string | null }[] = [];
         let page = 1;
         while (true) {
           const res = await octokit.issues.listComments({ owner: o, repo: r, issue_number, per_page: 100, page });
@@ -1315,14 +1457,10 @@ const rawHandler = createMcpHandler(
           page += 1;
         }
 
-        const header = `#${issue.data.number} [${issue.data.state}] ${issue.data.title}\nAuthor: ${
-          issue.data.user?.login ?? "unknown"
-        } · Created at: ${issue.data.created_at}`;
-        const body = issue.data.body?.trim() ? issue.data.body : "(no description)";
+        const header = `${formatIssue(issue)}\nAuthor: ${meta.data.user?.login ?? "unknown"} · Created at: ${meta.data.created_at}`;
+        const body = issue.body?.trim() ? issue.body : "(no description)";
         const commentLines = comments.length
-          ? comments
-              .map((c) => `— ${c.user?.login ?? "unknown"} (${c.created_at}):\n${c.body ?? ""}`)
-              .join("\n\n")
+          ? comments.map((c) => `— ${c.user?.login ?? "unknown"} (${c.created_at}) · id ${c.node_id}:\n${c.body ?? ""}`).join("\n\n")
           : "(no comments)";
 
         const text = `${header}\n\nDescription:\n${body}\n\nComments (${comments.length}):\n${commentLines}`;
@@ -1333,17 +1471,212 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "create_issue",
       {
-        description: "Creates a new issue in the repository.",
+        description:
+          "Creates a new issue in the repository. Optionally, in the same call: labels, assignees, milestone, type (organization repositories only), parent issue, and a GitHub Project to add it to with initial field values. Every name is checked before anything is created; a wrong one lists the valid names.",
         inputSchema: z.strictObject({
           ...ownerRepoShape,
           title: z.string(),
           body: z.string().optional(),
+          labels: z.array(z.string()).optional().describe("Existing label names, e.g. [\"bug\", \"priority: high\"]"),
+          assignees: z.array(z.string()).optional().describe("GitHub logins that can be assigned in the repository"),
+          milestone: z.string().optional().describe("Existing milestone title"),
+          type: z.string().optional().describe("Issue type name, e.g. 'Bug' (organization repositories only)"),
+          parent: z.string().optional().describe("Parent issue: '#12', 'owner/repo#12' or its URL — the new issue becomes its sub-issue"),
+          project: z
+            .strictObject({
+              owner: z.string().optional().describe("User or organization that owns the project. Default: your own GitHub user."),
+              number: z.number().int().min(1).describe("Project number"),
+              fields: z
+                .record(z.string(), z.union([z.string(), z.number(), z.null()]))
+                .optional()
+                .describe("Initial field values, same format as update_project_item, e.g. {\"Status\": \"Ready\"}"),
+            })
+            .optional()
+            .describe("GitHub Project (board) to add the new issue to"),
         }),
       },
-      async ({ account, owner, repo, title, body }, ctx) => {
-        const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
-        const issue = await octokit.issues.create({ owner: o, repo: r, title, body });
-        return { content: [{ type: "text", text: `Issue #${issue.data.number} created: ${issue.data.html_url}` }] };
+      async ({ account, owner, repo, title, body, labels, assignees, milestone, type, parent, project }, ctx) => {
+        const rr = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const { owner: o, repo: r, octokit } = rr;
+        const rctx = await repoContext(octokit, o, r, null);
+
+        // Resolve everything first: a wrong name creates nothing.
+        const labelIds = nonEmpty(labels) ? resolveLabels(rctx, labels!).map((l) => l.id) : undefined;
+        const assigneeIds = nonEmpty(assignees) ? (await resolveAssignees(octokit, o, r, assignees!)).map((a) => a.id) : undefined;
+        const milestoneId = milestone ? resolveMilestone(rctx, milestone).id : undefined;
+        const issueTypeId = type ? resolveType(rctx, type).id : undefined;
+        const parentRef = parent ? await issueRefId(octokit, parent, o, r, "parent") : undefined;
+        const rp = project
+          ? await withProjectScope(async () => {
+              const p = await resolveProject(ctx.http?.authInfo, account ?? rr.accountName, project.owner, project.number);
+              requireWrite(p);
+              for (const [k, v] of Object.entries(project.fields ?? {})) resolveValue(p.project, k, v);
+              return p;
+            })
+          : undefined;
+
+        const res = await octokit.graphql<{ createIssue: { issue: IssueView } }>(CREATE_ISSUE_MUTATION, {
+          input: {
+            repositoryId: rctx.id,
+            title,
+            body: body ?? null,
+            labelIds,
+            assigneeIds,
+            milestoneId,
+            issueTypeId,
+            parentIssueId: parentRef?.id,
+            projectV2Ids: rp ? [rp.project.id] : undefined,
+          },
+        });
+        const issue = res.createIssue.issue;
+        const lines = [`Issue #${issue.number} created: ${issue.url} · account: ${rr.accountName}`];
+
+        if (rp) {
+          lines.push(`Added to project ${rp.owner}#${rp.project.number} (${rp.project.title}).`);
+          if (project?.fields && Object.keys(project.fields).length) {
+            try {
+              const itemId = await withProjectScope(() => resolveItemId(rp, `${o}/${r}#${issue.number}`));
+              const set = await withProjectScope(() => setFields(rp, itemId, project.fields!));
+              lines.push(`Project fields: ${set.join(" · ")}`);
+            } catch (err) {
+              lines.push(
+                `⚠ The issue was created and added to the board, but setting its project fields failed: ${(err as Error).message} Set them with update_project_item.`
+              );
+            }
+          }
+        }
+        lines.push("", formatIssue(issue));
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "update_issue",
+      {
+        description:
+          "Changes an issue in one atomic write: title, body (replaced as a whole), close (reason: completed, not_planned, or duplicate with 'duplicate_of') or reopen, add/remove labels, add/remove assignees, set or clear the milestone and the type. Pass only what changes. Labels, milestone, assignees and type must already exist — a wrong name lists the valid ones and nothing is written.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          issue_number: z.number().int().describe("Issue number"),
+          title: z.string().optional().describe("New title"),
+          body: z.string().optional().describe("New description — replaces the current one entirely"),
+          state: z.enum(["open", "closed"]).optional().describe("'closed' closes it (default reason: completed); 'open' reopens it"),
+          state_reason: z
+            .enum(["completed", "not_planned", "duplicate"])
+            .optional()
+            .describe("Why it is closed. Implies closing. 'duplicate' needs 'duplicate_of'."),
+          duplicate_of: z.string().optional().describe("The original issue, when closing as duplicate: '#12', 'owner/repo#12' or its URL"),
+          add_labels: z.array(z.string()).optional().describe("Existing label names to add; labels already on the issue stay"),
+          remove_labels: z.array(z.string()).optional().describe("Label names to remove; the others stay"),
+          add_assignees: z.array(z.string()).optional().describe("Logins to assign; current assignees stay"),
+          remove_assignees: z.array(z.string()).optional().describe("Logins to unassign; the others stay"),
+          milestone: z.string().nullable().optional().describe("Existing milestone title, or null to clear"),
+          type: z.string().nullable().optional().describe("Issue type name (organization repositories only), or null to clear"),
+        }),
+      },
+      async (args, ctx) => {
+        const { account, owner, repo, issue_number, title, body, add_labels, remove_labels, add_assignees, remove_assignees, milestone, type } = args;
+        const changes = [title, body, args.state, args.state_reason, args.duplicate_of, add_labels, remove_labels, add_assignees, remove_assignees, milestone, type];
+        if (changes.every((v) => v === undefined || (Array.isArray(v) && v.length === 0))) {
+          throw new Error(
+            "update_issue needs at least one change: title, body, state / state_reason / duplicate_of, add_labels, remove_labels, add_assignees, remove_assignees, milestone or type."
+          );
+        }
+        const both = [...overlap(add_labels, remove_labels), ...overlap(add_assignees, remove_assignees)];
+        if (both.length) throw new Error(`${both.map((x) => `'${x}'`).join(", ")} is both added and removed in the same call. Nothing was changed.`);
+        const target = planState(args);
+
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const rctx = await repoContext(octokit, o, r, issue_number);
+        const before = rctx.issue!;
+
+        // Resolve every name before writing anything.
+        const input: Record<string, unknown> = { id: before.id };
+        if (title !== undefined) input.title = title;
+        if (body !== undefined) input.body = body;
+        if (nonEmpty(add_labels) || nonEmpty(remove_labels)) {
+          const add = nonEmpty(add_labels) ? resolveLabels(rctx, add_labels!) : [];
+          const remove = nonEmpty(remove_labels) ? resolveLabels(rctx, remove_labels!) : [];
+          input.labelIds = applyAddRemove(before.labels.nodes, add, remove).map((l) => l.id);
+        }
+        if (nonEmpty(add_assignees) || nonEmpty(remove_assignees)) {
+          const add = nonEmpty(add_assignees) ? await resolveAssignees(octokit, o, r, add_assignees!) : [];
+          const remove = (remove_assignees ?? []).map((login) => {
+            const hit = before.assignees.nodes.find((a) => a.login.toLowerCase() === login.replace(/^@/, "").toLowerCase());
+            return hit ?? { id: `missing:${login}`, login };
+          });
+          input.assigneeIds = applyAddRemove(before.assignees.nodes, add, remove).map((a) => a.id);
+        }
+        if (milestone !== undefined) input.milestoneId = milestone === null ? null : resolveMilestone(rctx, milestone).id;
+        if (type !== undefined) input.issueTypeId = type === null ? null : resolveType(rctx, type).id;
+        if (target) {
+          const stateInput: Record<string, unknown> = { value: target.value };
+          if (target.reason) stateInput.stateReason = target.reason;
+          if (target.reason === "DUPLICATE") {
+            const dup = await issueRefId(octokit, args.duplicate_of!, o, r, "duplicate_of");
+            if (dup.id === before.id) throw new Error("An issue can't be a duplicate of itself. Nothing was changed.");
+            stateInput.duplicateIssueId = dup.id;
+          }
+          input.stateInput = stateInput;
+        }
+
+        const res = await octokit.graphql<{ updateIssue: { issue: IssueView } }>(UPDATE_ISSUE_MUTATION, { input });
+        const after = res.updateIssue.issue;
+        const changed = diffIssue(before, after);
+        const head = `Updated ${o}/${r}#${issue_number} · account: ${accountName}${changed.length ? ` · ${changed.join(" · ")}` : " · (nothing was different)"}`;
+        return { content: [{ type: "text", text: `${head}\n\n${formatIssue(after)}` }] };
+      }
+    );
+
+    server.registerTool(
+      "add_sub_issue",
+      {
+        description:
+          "Makes an issue a sub-issue of another. The parent is owner/repo/issue_number; the sub-issue can be in another repository ('owner/repo#12' or URL). An issue has at most one parent: set 'replace_parent' to move it from its current parent.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          issue_number: z.number().int().describe("Parent issue number"),
+          sub_issue: z.string().describe("The issue to attach: '#12' (same repository), 'owner/repo#12' or its URL"),
+          replace_parent: z.boolean().default(false).describe("If the sub-issue already has another parent, move it here"),
+        }),
+      },
+      async ({ account, owner, repo, issue_number, sub_issue, replace_parent }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const parent = await issueRefId(octokit, `#${issue_number}`, o, r, "parent");
+        const child = await issueRefId(octokit, sub_issue, o, r, "sub_issue");
+        if (child.id === parent.id) throw new Error("An issue can't be its own sub-issue.");
+        const res = await octokit.graphql<{ addSubIssue: { issue: IssueView } }>(ADD_SUB_ISSUE_MUTATION, {
+          issueId: parent.id,
+          subIssueId: child.id,
+          replaceParent: replace_parent,
+        });
+        return {
+          content: [{ type: "text", text: `${child.label} is now a sub-issue of ${parent.label} · account: ${accountName}\n\n${formatIssue(res.addSubIssue.issue)}` }],
+        };
+      }
+    );
+
+    server.registerTool(
+      "remove_sub_issue",
+      {
+        description: "Detaches a sub-issue from its parent. Both issues stay as they are; only the link is removed.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          issue_number: z.number().int().describe("Parent issue number"),
+          sub_issue: z.string().describe("The sub-issue: '#12' (same repository), 'owner/repo#12' or its URL"),
+        }),
+      },
+      async ({ account, owner, repo, issue_number, sub_issue }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const parent = await issueRefId(octokit, `#${issue_number}`, o, r, "parent");
+        const child = await issueRefId(octokit, sub_issue, o, r, "sub_issue");
+        const res = await octokit.graphql<{ removeSubIssue: { issue: IssueView } }>(REMOVE_SUB_ISSUE_MUTATION, {
+          issueId: parent.id,
+          subIssueId: child.id,
+        });
+        return {
+          content: [{ type: "text", text: `${child.label} is no longer a sub-issue of ${parent.label} · account: ${accountName}\n\n${formatIssue(res.removeSubIssue.issue)}` }],
+        };
       }
     );
 

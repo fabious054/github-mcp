@@ -43,9 +43,13 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `update_pr` — edita título, descrição ou branch de destino de um PR, e fecha ou reabre (nunca faz merge)
 - `list_prs` — lista PRs
 - `comment_pr` — comenta num PR
+- `list_pr_comments` — comentários de conversa e de revisão no código de um PR, com os IDs
+- `edit_comment` — troca o texto de um comentário de issue, de conversa de PR ou de revisão no código
 - `list_issues` — lista issues (tarefas do board)
-- `get_issue` — lê uma issue completa: descrição e todos os comentários, em ordem
-- `create_issue` — cria uma issue
+- `get_issue` — lê uma issue completa: estado e motivo do fechamento, labels, responsáveis, milestone, tipo, issue pai e sub-issues, descrição e todos os comentários (com o ID), em ordem
+- `create_issue` — cria uma issue, opcionalmente já com labels, responsáveis, milestone, tipo, issue pai e um board com campos iniciais, numa chamada só
+- `update_issue` — edita título/descrição, fecha (concluída, não planejada, duplicada) ou reabre, adiciona/remove labels e responsáveis, define milestone e tipo — numa gravação atômica: veja o [ADR 0020](./docs/adr/0020-issue-management-graphql.md)
+- `add_sub_issue` / `remove_sub_issue` — liga ou desliga uma sub-issue (também entre repositórios)
 - `comment_issue` — comenta numa issue (ex: relatório final de QA)
 - `read_file` — lê o conteúdo de um arquivo numa branch (`branch`, ou `ref` pra branch, tag ou commit; padrão `main`)
 - `search_code` — busca código no repositório
@@ -235,6 +239,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0017 — Estatísticas da pessoa: contribuições via GraphQL, só as próprias contas](./docs/adr/0017-person-level-activity-stats.md)
 - [0018 — Divisão de atividade por partes, com cache que preserva privacidade](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
 - [0019 — Ferramentas de board (Projects v2): escopo `project`, campos pelo nome](./docs/adr/0019-projects-v2-board-tools.md)
+- [0020 — Gestão de issues via GraphQL: uma gravação atômica, adicionar/remover calculado no servidor](./docs/adr/0020-issue-management-graphql.md)
 
 ## Licença
 
