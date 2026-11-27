@@ -64,8 +64,8 @@ export default async function Image() {
             maxWidth: 820,
           }}
         >
-          Branches, commits, pull requests, issues and code search —
-          authorized with your own GitHub login.
+          Commits, pull requests, issues, project boards and activity
+          stats — authorized with your own GitHub login.
         </div>
       </div>
     ),

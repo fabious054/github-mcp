@@ -4,7 +4,7 @@ import "./globals.css";
 const SITE_URL = "https://github-mcp-seven.vercel.app";
 const TITLE = "GitHub MCP — Real GitHub access for Claude";
 const DESCRIPTION =
-  "An MCP server that gives Claude real GitHub access: branches, commits, pull requests, issues, and code search — authorized with your own GitHub login, never a shared token.";
+  "An MCP server that gives Claude real GitHub access: branches, commits, pull requests, issues, project boards and activity stats — authorized with your own GitHub login, never a shared token.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -21,6 +21,8 @@ export const metadata: Metadata = {
     "GitHub OAuth",
     "Claude connector",
     "AI coding agent",
+    "GitHub Projects",
+    "GitHub activity stats",
   ],
   authors: [{ name: "Fabio", url: "https://github.com/fabious054" }],
   category: "technology",
