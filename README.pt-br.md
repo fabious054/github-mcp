@@ -2,9 +2,23 @@
 
 *[Read in English](./README.md)*
 
-MCP server que dá ao Claude acesso real ao GitHub: criar e apagar branches,
-commitar, abrir, editar e comentar PRs, listar, criar, ler e comentar issues,
-ler arquivos e buscar código.
+MCP server que dá ao Claude acesso real ao GitHub — 78 ferramentas, toda
+chamada feita com o seu próprio login do GitHub:
+
+- **Código:** branches, commits (arquivo inteiro, diff ou commit atômico com
+  vários arquivos), leitura de arquivos e busca de código.
+- **Pull requests e issues:** abrir, editar, fechar e comentar PRs; criar,
+  editar, fechar, reabrir e organizar issues — etiquetas, responsáveis,
+  marco, tipo e sub-issues.
+- **Boards (GitHub Projects):** ver um board, adicionar itens e mudar
+  qualquer campo pelo nome, e gerenciar a estrutura — projetos, campos e
+  opções, iterações, visualizações e atualizações de status — além de
+  etiquetas e marcos do repositório e tipos de issue da organização.
+- **Estatísticas de atividade:** histórico de commits com linhas alteradas, e
+  a sua própria atividade em todos os repositórios que você alcança, por
+  período, repositório e mês.
+- **Várias contas do GitHub** no mesmo connector, com a conta certa escolhida
+  para cada repositório.
 
 ## Conectar nesta instância
 
@@ -21,6 +35,23 @@ nem fazer deploy de nada pra usar.
 3. Pronto. Toda chamada de ferramenta roda com o seu próprio acesso do
    GitHub — nunca uma conta compartilhada.
 
+### O que o connector pede ao GitHub
+
+A tela de "Autorizar" pede três permissões (escopos OAuth):
+
+| Escopo | Para quê |
+|---|---|
+| `repo` | Ler e escrever nos repositórios que você acessa: código, branches, PRs, issues, etiquetas, marcos |
+| `project` | Ler e alterar GitHub Projects (boards) |
+| `admin:org` | Alterar os tipos de issue de uma organização (só onde você é dono); também cobre ler os membros da organização |
+
+O GitHub continua conferindo o seu próprio papel em toda chamada: o connector
+nunca faz mais do que você pode fazer. O `admin:org` é o mais amplo dos três —
+veja o [ADR 0022](./docs/adr/0022-admin-org-scope.md) para o motivo e o
+[SECURITY.pt-br.md](./SECURITY.pt-br.md) para como os tokens são protegidos.
+Se você conectou antes de um escopo ser adicionado, as ferramentas que
+precisam dele pedem para reconectar.
+
 Quer usar mais de uma conta do GitHub no mesmo connector (ex: uma conta
 pessoal e uma de organização)? Chame a ferramenta `link_account` — ela te
 guia pra vincular contas adicionais, e o servidor depois descobre sozinho
@@ -34,25 +65,37 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 
 ## Ferramentas disponíveis
 
+### Branches, commits e arquivos
+
 - `create_branch` — cria uma branch a partir de outra
 - `delete_branch` — apaga uma branch; recusa a branch padrão, branches protegidas e branches com PR aberto
 - `commit_file` — cria/atualiza um arquivo com uma mensagem de commit (conteúdo inteiro, um arquivo por chamada)
 - `patch_file` — aplica um diff unificado a um arquivo existente numa branch, sem reenviar o conteúdo inteiro
 - `get_branch_head` — lê o SHA completo (40 caracteres) do commit que uma branch aponta
+- `read_file` — lê o conteúdo de um arquivo numa branch (`branch`, ou `ref` pra branch, tag ou commit; padrão `main`)
+- `search_code` — busca código no repositório
+- `create_repo` — cria um repositório vazio pra você ou pra uma organização; a visibilidade (privado ou público) é sempre escolhida por você (não existe ferramenta pra apagar repositório)
+
+### Pull requests
+
 - `open_pr` — abre um Pull Request
 - `update_pr` — edita título, descrição ou branch de destino de um PR, e fecha ou reabre (nunca faz merge)
 - `list_prs` — lista PRs
 - `comment_pr` — comenta num PR
 - `list_pr_comments` — comentários de conversa e de revisão no código de um PR, com os IDs
 - `edit_comment` — troca o texto de um comentário de issue, de conversa de PR ou de revisão no código
+
+### Issues
+
 - `list_issues` — lista issues (tarefas do board)
 - `get_issue` — lê uma issue completa: estado e motivo do fechamento, labels, responsáveis, milestone, tipo, issue pai e sub-issues, descrição e todos os comentários (com o ID), em ordem
 - `create_issue` — cria uma issue, opcionalmente já com labels, responsáveis, milestone, tipo, issue pai e um board com campos iniciais, numa chamada só
 - `update_issue` — edita título/descrição, fecha (concluída, não planejada, duplicada) ou reabre, adiciona/remove labels e responsáveis, define milestone e tipo — numa gravação atômica: veja o [ADR 0020](./docs/adr/0020-issue-management-graphql.md)
 - `add_sub_issue` / `remove_sub_issue` — liga ou desliga uma sub-issue (também entre repositórios)
 - `comment_issue` — comenta numa issue (ex: relatório final de QA)
-- `read_file` — lê o conteúdo de um arquivo numa branch (`branch`, ou `ref` pra branch, tag ou commit; padrão `main`)
-- `search_code` — busca código no repositório
+
+### Histórico de commits e estatísticas de atividade
+
 - `list_commits` — lista commits com autor, datas, mensagem e pais; filtra por branch, caminho, autor e período; `include_stats` acrescenta linhas adicionadas/removidas e arquivos alterados em cada commit (veja o [ADR 0016](./docs/adr/0016-commit-history-stats.md))
 - `get_commit` — lê um commit completo: estatísticas e todos os arquivos alterados, com o diff de cada arquivo se pedido
 - `compare_commits` — compara duas branches, tags ou SHAs: à frente/atrás, commits, arquivos alterados e totais
@@ -60,6 +103,9 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `search_commits` — os commits que você fez em todos os repositórios, por conta vinculada, com estatísticas por commit se pedido (só branches padrão)
 - `search_issues_prs` — os PRs e issues que você criou, revisou, mesclou, recebeu atribuídos ou comentou, em todos os repositórios, com totais por papel; `include_stats` acrescenta o tamanho de cada PR
 - `get_activity_breakdown` — quanto você alterou num período, incluindo repositórios privados: commits, linhas adicionadas/removidas, arquivos e PRs com o tamanho — totais, por repositório e por mês; períodos grandes são medidos por partes (chame de novo para continuar) — veja o [ADR 0018](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
+
+### Boards (GitHub Projects) — itens
+
 - `list_projects` — os Projects (boards) do GitHub de um usuário ou organização
 - `get_project` — campos de um project, opções de Status, iterações, repositórios vinculados e views
 - `list_project_items` — os itens de um board com todos os valores de campo, com filtro opcional por um deles (ex.: `Status=In progress`)
@@ -68,6 +114,9 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `move_project_item` — move um item para depois de outro, ou para o topo
 - `archive_project_item` / `unarchive_project_item` — arquiva ou restaura um item (mantém os campos)
 - `remove_project_item` — tira um item do board (a issue/PR em si não muda) — as ferramentas de board precisam do escopo `project`: veja o [ADR 0019](./docs/adr/0019-projects-v2-board-tools.md)
+
+### Boards — estrutura
+
 - `create_project` / `update_project` — cria um board (opcionalmente já vinculado a um repositório); edita título, descrição, README, visibilidade, fecha ou reabre
 - `delete_project` — apaga um board; sem `confirm: true` só mostra o que seria perdido
 - `link_project_repo` / `unlink_project_repo` — vincula ou desvincula um repositório
@@ -77,15 +126,20 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `delete_project_field` — apaga um campo personalizado; sem `confirm: true` só mostra quantos itens têm valor nele
 - `list_project_views` / `create_project_view` / `update_project_view` / `delete_project_view` — visualizações de um board: nome, layout (tabela, board, roadmap), filtro e campos visíveis (não em roadmap; agrupamento e ordenação não dá para definir pela API do GitHub); apagar exige `confirm: true`
 - `list_project_status_updates` / `create_project_status_update` / `update_project_status_update` / `delete_project_status_update` — atualizações de status de um board: on track, at risk, off track, inactive ou complete, com datas de início e meta e texto; apagar exige `confirm: true`
+
+### Etiquetas, marcos e tipos de issue
+
 - `list_labels` / `create_label` / `update_label` / `delete_label` — etiquetas de um repositório: criar, renomear, mudar a cor e a descrição; apagar mostra quantas issues e PRs têm a etiqueta e exige `confirm: true`
 - `list_milestones` / `create_milestone` / `update_milestone` / `delete_milestone` — marcos de um repositório: criar, renomear, descrição, data de entrega, fechar ou reabrir; apagar mostra quantas issues e PRs perderiam o marco e exige `confirm: true`
 - `list_issue_types` / `create_issue_type` / `update_issue_type` / `delete_issue_type` — tipos de issue de uma organização (alterar exige ser dono da organização e o escopo `admin:org` — [ADR 0022](./docs/adr/0022-admin-org-scope.md)): criar, renomear, cor, descrição, ativar ou desativar; apagar mostra quantas issues usam o tipo e exige `confirm: true`
+
+### Contas
+
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão
 - `unlink_account` — remove uma conta adicional da sua sessão e revoga o token dela no GitHub (nunca a sua conta primária)
 - `list_repos_by_account` — lista os repositórios acessíveis por uma conta vinculada específica
-- `create_repo` — cria um repositório vazio pra você ou pra uma organização; a visibilidade (privado ou público) é sempre escolhida por você (não existe ferramenta pra apagar repositório)
 
 ### Editando um trecho pequeno de um arquivo grande
 

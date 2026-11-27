@@ -10,6 +10,13 @@ before making the repository public, and how to report a vulnerability.
 - Everyone who connects authenticates with their **own** GitHub account
   through a real OAuth "Authorize" flow — there is no manual token to
   generate and no shared credential.
+- The connector asks GitHub for the `repo`, `project` and `admin:org`
+  scopes (see "What the connector asks GitHub for" in the
+  [README](./README.md)). GitHub still enforces the user's own role on every
+  call, but a token with `admin:org` carries owner-level power over every
+  organization its user owns — so a leaked session token is more sensitive
+  than one limited to repositories. The protections below apply to it
+  unchanged. See [ADR 0022](./docs/adr/0022-admin-org-scope.md).
 - Each GitHub user gets **one** token from this app, shared by every place
   they connect from (Claude web, desktop, mobile, cloud sessions). GitHub
   allows only 10 tokens per user and app and silently revokes older ones past
