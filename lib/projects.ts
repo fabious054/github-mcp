@@ -354,7 +354,7 @@ export function formatProject(p: Project, owner: string, today = new Date().toIS
   for (const f of p.fields.nodes.filter((x) => x.name)) {
     const ro = READ_ONLY_BUILTINS.has(f.dataType) ? " (from the issue/PR — not settable here)" : "";
     let extra = "";
-    if (f.dataType === "SINGLE_SELECT") extra = `: ${(f.options ?? []).map((o) => o.name).join(" | ")}`;
+    if (f.dataType === "SINGLE_SELECT") extra = `: ${(f.options ?? []).map((o) => (o.color ? `${o.name} (${o.color.toLowerCase()})` : o.name)).join(" | ")}`;
     if (f.dataType === "ITERATION" && f.configuration) {
       const all = [...f.configuration.completedIterations, ...f.configuration.iterations];
       const cur = currentIteration(all, today);

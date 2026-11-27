@@ -2760,13 +2760,21 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "set_project_template",
       {
-        description: "Marks a GitHub Project as a template (organization projects can be offered when creating new ones) or unmarks it.",
+        description: "Marks a GitHub Project as a template or unmarks it. Templates are an organization feature: user-owned projects can't be marked (copy_project works on any project).",
         inputSchema: z.strictObject({ ...projectShape, template: z.boolean().describe("true marks it as a template, false unmarks it") }),
       },
       async ({ account, owner, number, template }, ctx) =>
         withProjectScope(async () => {
           const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
           requireWrite(rp);
+          if (template) {
+            const kind = (await ownerNodeId(rp.octokit, rp.owner)).kind;
+            if (kind !== "Organization") {
+              throw new Error(
+                `Project ${rp.owner}#${number} belongs to a user account, and GitHub only allows organization projects to be templates. Nothing was changed. To reuse it, call copy_project on it directly.`
+              );
+            }
+          }
           const res = await rp.octokit.graphql<Record<string, { projectV2: { template: boolean } }>>(template ? MARK_TEMPLATE_MUTATION : UNMARK_TEMPLATE_MUTATION, {
             projectId: rp.project.id,
           });
@@ -2789,6 +2797,7 @@ const rawHandler = createMcpHandler(
             .strictObject({
               start_date: z.string().describe("First iteration's start date, YYYY-MM-DD"),
               duration_days: z.number().int().describe("Length of each iteration in days, e.g. 14"),
+              count: z.number().int().optional().describe("How many iterations to create, back to back from start_date (1–20; default 3, like GitHub's UI)"),
             })
             .optional()
             .describe("Settings for an iteration field"),
@@ -2813,7 +2822,7 @@ const rawHandler = createMcpHandler(
               return { name: o.name.trim(), color: parseColor(o.color), description: o.description ?? "" };
             });
           }
-          if (iteration) input.iterationConfiguration = newIterationConfig(iteration.start_date, iteration.duration_days);
+          if (iteration) input.iterationConfiguration = newIterationConfig(iteration.start_date, iteration.duration_days, iteration.count);
           await rp.octokit.graphql(CREATE_FIELD_MUTATION, { input });
           const p = await reloadProject(rp);
           return { content: [{ type: "text", text: `Field created on project ${rp.owner}#${number} · account: ${rp.accountName}\n${fieldLine(p, name)}` }] };

@@ -241,10 +241,25 @@ export function buildIterations(field: Pick<Field, "name" | "configuration">, ch
   };
 }
 
-export function newIterationConfig(startDate: string, durationDays: number): { startDate: string; duration: number; iterations: never[] } {
+// Default number of iterations a new iteration field starts with — the same
+// as a field created in GitHub's UI. GitHub's API creates none unless they
+// are listed, which left new fields empty (#119).
+export const DEFAULT_NEW_ITERATIONS = 3;
+
+export function newIterationConfig(
+  startDate: string,
+  durationDays: number,
+  count = DEFAULT_NEW_ITERATIONS
+): { startDate: string; duration: number; iterations: { title: string; startDate: string; duration: number }[] } {
   if (!DATE.test(startDate)) throw new Error(`iteration.start_date must be YYYY-MM-DD (got '${startDate}'). Nothing was created.`);
   checkDuration(durationDays, "iteration.duration_days");
-  return { startDate, duration: durationDays, iterations: [] };
+  if (!Number.isInteger(count) || count < 1 || count > 20) throw new Error(`iteration.count must be between 1 and 20 (got ${count}). Nothing was created.`);
+  const iterations = Array.from({ length: count }, (_, i) => ({
+    title: `Iteration ${i + 1}`,
+    startDate: addDays(startDate, i * durationDays),
+    duration: durationDays,
+  }));
+  return { startDate, duration: durationDays, iterations };
 }
 
 // ---------- Impact counts ----------

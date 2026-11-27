@@ -70,8 +70,8 @@ target. See [Available tools](#available-tools) below.
 - `create_project` / `update_project` — creates a board (optionally linked to a repository); edits title, description, README, visibility, closes or reopens it
 - `delete_project` — deletes a board; without `confirm: true` it only reports what would be lost
 - `link_project_repo` / `unlink_project_repo` — links or unlinks a repository
-- `copy_project` / `set_project_template` — copies a board (e.g. a template) into a new one; marks or unmarks a template
-- `create_project_field` — adds a text, number, date, single-select (with options) or iteration field
+- `copy_project` / `set_project_template` — copies a board (e.g. a template) into a new one; marks or unmarks a template (organization projects only — a GitHub rule)
+- `create_project_field` — adds a text, number, date, single-select (with options) or iteration field (starts with 3 iterations by default, like GitHub's UI)
 - `update_project_field` — renames a field; adds, renames, recolors or removes options (Status included); edits iterations (add, rename, reschedule, remove) — removals report the impact first and need `confirm: true`: see [ADR 0021](./docs/adr/0021-board-structure-tools.md)
 - `delete_project_field` — deletes a custom field; without `confirm: true` it only reports how many items have a value
 - `whoami` — shows which identity/account is being used in the current session

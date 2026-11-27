@@ -71,8 +71,8 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `create_project` / `update_project` — cria um board (opcionalmente já vinculado a um repositório); edita título, descrição, README, visibilidade, fecha ou reabre
 - `delete_project` — apaga um board; sem `confirm: true` só mostra o que seria perdido
 - `link_project_repo` / `unlink_project_repo` — vincula ou desvincula um repositório
-- `copy_project` / `set_project_template` — copia um board (ex.: um template) para um novo; marca ou desmarca como template
-- `create_project_field` — adiciona um campo de texto, número, data, seleção (com opções) ou iteração
+- `copy_project` / `set_project_template` — copia um board (ex.: um template) para um novo; marca ou desmarca como template (só projetos de organização — regra do GitHub)
+- `create_project_field` — adiciona um campo de texto, número, data, seleção (com opções) ou iteração (começa com 3 iterações por padrão, como na tela do GitHub)
 - `update_project_field` — renomeia um campo; adiciona, renomeia, muda a cor ou remove opções (inclusive do Status); edita iterações (adicionar, renomear, reagendar, remover) — remoções mostram o impacto antes e exigem `confirm: true`: veja o [ADR 0021](./docs/adr/0021-board-structure-tools.md)
 - `delete_project_field` — apaga um campo personalizado; sem `confirm: true` só mostra quantos itens têm valor nele
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
