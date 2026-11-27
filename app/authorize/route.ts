@@ -8,6 +8,7 @@ import {
 } from "../../lib/oauth";
 import { getPublicOrigin } from "mcp-handler";
 import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
+import { oauthScopes } from "../../lib/scopes";
 
 export const runtime = "nodejs";
 
@@ -63,7 +64,7 @@ export async function GET(req: Request) {
   const githubClientId = process.env.GITHUB_OAUTH_CLIENT_ID!;
   const origin = getPublicOrigin(req);
   const callbackUrl = `${origin}/callback`;
-  const scope = process.env.GITHUB_OAUTH_SCOPES || "repo read:org";
+  const scope = oauthScopes();
 
   const asState = encryptJson({
     mcpClientId: clientId,

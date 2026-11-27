@@ -55,6 +55,14 @@ target. See [Available tools](#available-tools) below.
 - `search_commits` — the commits you authored across repositories, per linked account, with optional per-commit stats (default branches only)
 - `search_issues_prs` — the PRs and issues you authored, reviewed, merged, were assigned or commented on, across repositories, with totals per role; `include_stats` adds each PR's size
 - `get_activity_breakdown` — how much you changed in a period, private repositories included: commits, lines added/removed, files and PRs with their size — totals, by repository and by month; large periods are measured in batches (call again to continue) — see [ADR 0018](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
+- `list_projects` — the GitHub Projects (boards) of a user or organization
+- `get_project` — a project's fields, Status options, iterations, linked repositories and views
+- `list_project_items` — the items on a board with every field value, optionally filtered by one (e.g. `Status=In progress`)
+- `add_project_item` — adds an issue/PR or a draft to a board, optionally setting fields
+- `update_project_item` — changes Status, Priority, dates, iteration and custom fields by name, several at once
+- `move_project_item` — moves an item after another one, or to the top
+- `archive_project_item` / `unarchive_project_item` — archives or restores an item (keeps its fields)
+- `remove_project_item` — removes an item from a board (the issue/PR itself is untouched) — board tools need the `project` scope: see [ADR 0019](./docs/adr/0019-projects-v2-board-tools.md)
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
@@ -217,6 +225,10 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./docs/adr/0014-long-token-lifetime.md)
 - [0015 — One GitHub token per user (GitHub's 10-token limit)](./docs/adr/0015-one-token-per-user.md)
+- [0016 — Commit history tools, per-commit stats on request](./docs/adr/0016-commit-history-stats.md)
+- [0017 — Person-level activity stats: GraphQL contributions, own accounts only](./docs/adr/0017-person-level-activity-stats.md)
+- [0018 — Activity breakdown in batches with a privacy-preserving cache](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
+- [0019 — Projects (v2) board tools: `project` scope, fields by name](./docs/adr/0019-projects-v2-board-tools.md)
 
 ## License
 
