@@ -129,6 +129,31 @@ import {
   type IssueView,
   type RepoContext,
 } from "../../lib/issues";
+import {
+  CONFIRM_HINT,
+  COPY_PROJECT_MUTATION,
+  CREATE_FIELD_MUTATION,
+  CREATE_PROJECT_MUTATION,
+  DELETE_FIELD_MUTATION,
+  DELETE_PROJECT_MUTATION,
+  FIELD_TYPES,
+  LINK_REPO_MUTATION,
+  MARK_TEMPLATE_MUTATION,
+  OPTION_COLORS,
+  OWNER_ID_QUERY,
+  REPO_ID_QUERY,
+  UNLINK_REPO_MUTATION,
+  UNMARK_TEMPLATE_MUTATION,
+  UPDATE_FIELD_DEF_MUTATION,
+  UPDATE_PROJECT_MUTATION,
+  buildIterations,
+  buildOptions,
+  countValues,
+  fieldNameTaken,
+  findEditableField,
+  newIterationConfig,
+  parseColor,
+} from "../../lib/project-structure";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -662,6 +687,79 @@ async function issueRefId(octokit: Octokit, ref: string, owner: string, repo: st
 }
 
 const nonEmpty = (xs: string[] | undefined) => (xs && xs.length ? xs : undefined);
+
+// ---------- Board structure helpers (issue #116, ADR 0021) ----------
+
+// Account for creating something under an owner (create_project,
+// copy_project's target): explicit 'account' wins; then the linked account
+// whose login is the owner; then the only account. Never a silent guess.
+async function resolveOwnerAccount(
+  authInfo: { token: string; extra?: Record<string, unknown> } | undefined,
+  accountName: string | undefined,
+  owner: string | undefined
+): Promise<{ octokit: Octokit; accountName: string; owner: string }> {
+  if (!authInfo) {
+    const { name, config } = resolveStaticAccount(accountName, owner);
+    const o = owner || config.defaultOwner;
+    if (!o) throw new Error("Missing 'owner': the user or organization that will own the project.");
+    return { octokit: new Octokit({ auth: config.token }), accountName: name, owner: o };
+  }
+  const { primaryLogin, candidates } = await getOAuthCandidates(authInfo);
+  const o = owner || primaryLogin;
+  if (!o) throw new Error("Missing 'owner': the user or organization that will own the project.");
+  const pick =
+    (accountName && candidates.find((c) => c.login.toLowerCase() === accountName.toLowerCase())) ||
+    (!accountName && candidates.find((c) => c.login.toLowerCase() === o.toLowerCase())) ||
+    (!accountName && candidates.length === 1 ? candidates[0] : undefined);
+  if (!pick) {
+    if (accountName) throw new Error(`Account '${accountName}' is not linked to your session. Available accounts: ${candidates.map((c) => c.login).join(", ")}.`);
+    throw new Error(`Several accounts are linked (${candidates.map((c) => c.login).join(", ")}) and none is '${o}'. Repeat the call with 'account' set to the one that can create projects in '${o}'.`);
+  }
+  return { octokit: new Octokit({ auth: pick.token }), accountName: pick.login, owner: o };
+}
+
+async function ownerNodeId(octokit: Octokit, login: string): Promise<{ id: string; kind: string }> {
+  const res = await octokit.graphql<{ repositoryOwner: { id: string; __typename: string } | null }>(OWNER_ID_QUERY, { login });
+  if (!res.repositoryOwner) throw new Error(`'${login}' is not a GitHub user or organization this account can see.`);
+  return { id: res.repositoryOwner.id, kind: res.repositoryOwner.__typename };
+}
+
+async function repoNodeId(octokit: Octokit, full: string): Promise<{ id: string; name: string }> {
+  const m = full.trim().match(/^([^/\s]+)\/([^/\s]+)$/);
+  if (!m) throw new Error(`'${full}' is not a repository. Use 'owner/name'.`);
+  const res = await octokit.graphql<{ repository: { id: string; nameWithOwner: string } | null }>(REPO_ID_QUERY, { owner: m[1], name: m[2] });
+  if (!res.repository) throw new Error(`Repository ${full} was not found, or this account can't see it.`);
+  return { id: res.repository.id, name: res.repository.nameWithOwner };
+}
+
+// Every item of the board, archived included — for impact counts.
+async function allItems(rp: ResolvedProject): Promise<Item[]> {
+  const items: Item[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 50; page++) {
+    const res: { node: { items: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: Item[] } } | null } = await rp.octokit.graphql(
+      LIST_ITEMS_QUERY,
+      { id: rp.project.id, first: 100, after, archivedStates: archivedStatesFor(true) }
+    );
+    const conn = res.node?.items;
+    if (!conn) break;
+    items.push(...conn.nodes);
+    if (!conn.pageInfo.hasNextPage) break;
+    after = conn.pageInfo.endCursor;
+  }
+  return items;
+}
+
+async function reloadProject(rp: ResolvedProject): Promise<Project> {
+  const p = await fetchProject(rp.octokit, rp.owner, rp.project.number);
+  if (!p) throw new Error(`Project ${rp.owner}#${rp.project.number} could not be read back.`);
+  return p;
+}
+
+function fieldLine(p: Project, name: string): string {
+  const all = formatProject(p, "").split("\n");
+  return all.find((l) => l.trimStart().toLowerCase().startsWith(`${name.toLowerCase()} [`)) ?? `  ${name}`;
+}
 
 // ---------- Activity breakdown helpers (ADR 0018) ----------
 
@@ -2496,6 +2594,327 @@ const rawHandler = createMcpHandler(
           return {
             content: [{ type: "text", text: `Removed from project ${rp.owner}#${rp.project.number} · account: ${rp.accountName}\nWas:\n${before}\n(The issue/PR itself is unchanged; a draft is deleted.)` }],
           };
+        })
+    );
+
+    // ---------- BOARD STRUCTURE — phase 3a (issue #116, ADR 0021) ----------
+
+    const confirmSchema = z.boolean().default(false).describe("Must be true to apply. Without it the tool only reports what would be lost and changes nothing.");
+    const optionInSchema = z.strictObject({
+      name: z.string().min(1),
+      color: z.string().optional().describe(`One of: ${OPTION_COLORS.map((c) => c.toLowerCase()).join(", ")}. Default gray.`),
+      description: z.string().optional(),
+    });
+
+    server.registerTool(
+      "create_project",
+      {
+        description: "Creates a GitHub Project (board) for a user or organization, optionally linked to a repository right away. Returns its number and URL; then use create_project_field to add fields.",
+        inputSchema: z.strictObject({
+          account: ownerRepoShape.account,
+          owner: z.string().optional().describe("User or organization that will own the project. Default: your own GitHub user."),
+          title: z.string().min(1).describe("Project title"),
+          repo: z.string().optional().describe("Repository to link right away, as 'owner/name'"),
+        }),
+      },
+      async ({ account, owner, title, repo }, ctx) =>
+        withProjectScope(async () => {
+          const oa = await resolveOwnerAccount(ctx.http?.authInfo, account, owner);
+          const ownerRef = await ownerNodeId(oa.octokit, oa.owner);
+          const repoRef = repo ? await repoNodeId(oa.octokit, repo) : undefined;
+          const res = await oa.octokit.graphql<{ createProjectV2: { projectV2: { number: number; title: string; url: string } } }>(CREATE_PROJECT_MUTATION, {
+            ownerId: ownerRef.id,
+            title,
+            repositoryId: repoRef?.id ?? null,
+          });
+          const p = res.createProjectV2.projectV2;
+          return {
+            content: [{ type: "text", text: `Project ${oa.owner}#${p.number} "${p.title}" created · account: ${oa.accountName}\nURL: ${p.url}${repoRef ? `\nLinked repository: ${repoRef.name}` : ""}` }],
+          };
+        })
+    );
+
+    server.registerTool(
+      "update_project",
+      {
+        description: "Edits a GitHub Project: title, short description, README, visibility (public/private), and closes or reopens it. Pass only what changes.",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          title: z.string().min(1).optional(),
+          short_description: z.string().optional(),
+          readme: z.string().optional().describe("Project README (Markdown) — replaces the current one"),
+          public: z.boolean().optional().describe("true = visible to everyone who can see the owner; false = private"),
+          closed: z.boolean().optional().describe("true closes the project, false reopens it"),
+        }),
+      },
+      async ({ account, owner, number, title, short_description, readme, public: isPublic, closed }, ctx) =>
+        withProjectScope(async () => {
+          const input: Record<string, unknown> = {};
+          if (title !== undefined) input.title = title;
+          if (short_description !== undefined) input.shortDescription = short_description;
+          if (readme !== undefined) input.readme = readme;
+          if (isPublic !== undefined) input.public = isPublic;
+          if (closed !== undefined) input.closed = closed;
+          if (!Object.keys(input).length) throw new Error("update_project needs at least one change: title, short_description, readme, public or closed.");
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const res = await rp.octokit.graphql<{ updateProjectV2: { projectV2: { title: string; closed: boolean; public: boolean; shortDescription: string | null } } }>(
+            UPDATE_PROJECT_MUTATION,
+            { input: { projectId: rp.project.id, ...input } }
+          );
+          const p = res.updateProjectV2.projectV2;
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Project ${rp.owner}#${number} updated (${Object.keys(input).join(", ")}) · account: ${rp.accountName}\nNow: "${p.title}" · ${p.closed ? "closed" : "open"} · ${p.public ? "public" : "private"}${p.shortDescription ? ` · ${p.shortDescription}` : ""}`,
+              },
+            ],
+          };
+        })
+    );
+
+    server.registerTool(
+      "delete_project",
+      {
+        description: "Deletes a GitHub Project for good, with its fields and views (the issues and PRs themselves are untouched; draft items are lost). Without confirm: true it only reports what would be lost. To keep it, use update_project closed: true instead.",
+        inputSchema: z.strictObject({ ...projectShape, confirm: confirmSchema }),
+      },
+      async ({ account, owner, number, confirm }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const items = await allItems(rp);
+          const drafts = items.filter((i) => i.content?.__typename === "DraftIssue").length;
+          const repos = rp.project.repositories?.nodes.map((r) => r.nameWithOwner) ?? [];
+          const impact = `Project ${rp.owner}#${number} "${rp.project.title}": ${items.length} item(s) (${drafts} draft(s), lost for good), ${rp.project.fields.nodes.filter((f) => f.name).length} fields${repos.length ? `, linked to ${repos.join(", ")}` : ""}.`;
+          if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}\n${CONFIRM_HINT}` }] };
+          await rp.octokit.graphql(DELETE_PROJECT_MUTATION, { projectId: rp.project.id });
+          return { content: [{ type: "text", text: `Deleted ${impact} · account: ${rp.accountName}` }] };
+        })
+    );
+
+    for (const [toolName, link] of [
+      ["link_project_repo", true],
+      ["unlink_project_repo", false],
+    ] as const) {
+      server.registerTool(
+        toolName,
+        {
+          description: link
+            ? "Links a repository to a GitHub Project (it then shows the project, and new issues can default to it)."
+            : "Unlinks a repository from a GitHub Project. Items from that repository stay on the board.",
+          inputSchema: z.strictObject({ ...projectShape, repo: z.string().describe("Repository as 'owner/name'") }),
+        },
+        async ({ account, owner, number, repo }, ctx) =>
+          withProjectScope(async () => {
+            const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+            requireWrite(rp);
+            const r = await repoNodeId(rp.octokit, repo);
+            const linked = (rp.project.repositories?.nodes ?? []).some((x) => x.nameWithOwner.toLowerCase() === r.name.toLowerCase());
+            if (link && linked) return { content: [{ type: "text", text: `${r.name} is already linked to project ${rp.owner}#${number}.` }] };
+            if (!link && !linked) return { content: [{ type: "text", text: `${r.name} is not linked to project ${rp.owner}#${number}. Linked: ${(rp.project.repositories?.nodes ?? []).map((x) => x.nameWithOwner).join(", ") || "(none)"}.` }] };
+            await rp.octokit.graphql(link ? LINK_REPO_MUTATION : UNLINK_REPO_MUTATION, { projectId: rp.project.id, repositoryId: r.id });
+            const p = await reloadProject(rp);
+            return {
+              content: [{ type: "text", text: `${r.name} ${link ? "linked to" : "unlinked from"} project ${rp.owner}#${number} · account: ${rp.accountName}\nLinked repositories: ${(p.repositories?.nodes ?? []).map((x) => x.nameWithOwner).join(", ") || "(none)"}` }],
+            };
+          })
+      );
+    }
+
+    server.registerTool(
+      "copy_project",
+      {
+        description: "Copies a GitHub Project (e.g. a template) into a new one: fields, views and workflows are copied; items are not, except drafts when include_drafts is true.",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          title: z.string().min(1).describe("Title of the new project"),
+          target_owner: z.string().optional().describe("User or organization that will own the copy. Default: the same owner."),
+          include_drafts: z.boolean().default(false).describe("Also copy draft items"),
+        }),
+      },
+      async ({ account, owner, number, title, target_owner, include_drafts }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          const target = target_owner ?? rp.owner;
+          const ownerRef = await ownerNodeId(rp.octokit, target);
+          const res = await rp.octokit.graphql<{ copyProjectV2: { projectV2: { number: number; title: string; url: string } } }>(COPY_PROJECT_MUTATION, {
+            ownerId: ownerRef.id,
+            projectId: rp.project.id,
+            title,
+            includeDraftIssues: include_drafts,
+          });
+          const p = res.copyProjectV2.projectV2;
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Copied ${rp.owner}#${number} "${rp.project.title}" → ${target}#${p.number} "${p.title}" · account: ${rp.accountName}\nURL: ${p.url}\nCopied: fields, views, workflows${include_drafts ? ", draft items" : ""}. Not copied: issues and pull requests${include_drafts ? "" : ", draft items"}.`,
+              },
+            ],
+          };
+        })
+    );
+
+    server.registerTool(
+      "set_project_template",
+      {
+        description: "Marks a GitHub Project as a template (organization projects can be offered when creating new ones) or unmarks it.",
+        inputSchema: z.strictObject({ ...projectShape, template: z.boolean().describe("true marks it as a template, false unmarks it") }),
+      },
+      async ({ account, owner, number, template }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const res = await rp.octokit.graphql<Record<string, { projectV2: { template: boolean } }>>(template ? MARK_TEMPLATE_MUTATION : UNMARK_TEMPLATE_MUTATION, {
+            projectId: rp.project.id,
+          });
+          const now = Object.values(res)[0]?.projectV2.template;
+          return { content: [{ type: "text", text: `Project ${rp.owner}#${number} "${rp.project.title}" is ${now ? "now a template" : "no longer a template"} · account: ${rp.accountName}` }] };
+        })
+    );
+
+    server.registerTool(
+      "create_project_field",
+      {
+        description:
+          "Adds a custom field to a GitHub Project: text, number, date, single_select (with its options) or iteration (sprints: start date and length in days).",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          name: z.string().min(1).describe("Field name"),
+          type: z.enum(FIELD_TYPES),
+          options: z.array(optionInSchema).optional().describe("Options for a single_select field (at least one)"),
+          iteration: z
+            .strictObject({
+              start_date: z.string().describe("First iteration's start date, YYYY-MM-DD"),
+              duration_days: z.number().int().describe("Length of each iteration in days, e.g. 14"),
+            })
+            .optional()
+            .describe("Settings for an iteration field"),
+        }),
+      },
+      async ({ account, owner, number, name, type, options, iteration }, ctx) =>
+        withProjectScope(async () => {
+          if (type === "single_select" && !options?.length) throw new Error("A single_select field needs 'options' (at least one). Nothing was created.");
+          if (type !== "single_select" && options) throw new Error("'options' only applies to single_select fields. Nothing was created.");
+          if (type === "iteration" && !iteration) throw new Error("An iteration field needs 'iteration': { start_date, duration_days }. Nothing was created.");
+          if (type !== "iteration" && iteration) throw new Error("'iteration' only applies to iteration fields. Nothing was created.");
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          if (fieldNameTaken(rp.project, name)) throw new Error(`Project '${rp.project.title}' already has a field named '${name}'. Nothing was created.`);
+          const input: Record<string, unknown> = { projectId: rp.project.id, name, dataType: type.toUpperCase() };
+          if (options) {
+            const seen = new Set<string>();
+            input.singleSelectOptions = options.map((o) => {
+              const k = o.name.trim().toLowerCase();
+              if (seen.has(k)) throw new Error(`Option '${o.name}' appears twice. Nothing was created.`);
+              seen.add(k);
+              return { name: o.name.trim(), color: parseColor(o.color), description: o.description ?? "" };
+            });
+          }
+          if (iteration) input.iterationConfiguration = newIterationConfig(iteration.start_date, iteration.duration_days);
+          await rp.octokit.graphql(CREATE_FIELD_MUTATION, { input });
+          const p = await reloadProject(rp);
+          return { content: [{ type: "text", text: `Field created on project ${rp.owner}#${number} · account: ${rp.accountName}\n${fieldLine(p, name)}` }] };
+        })
+    );
+
+    server.registerTool(
+      "update_project_field",
+      {
+        description:
+          "Changes a custom field of a GitHub Project. Any field: rename. Single select (Status included): add_options, rename_options (items keep their value), edit_options (color/description), remove_options. Iteration: duration_days for new iterations, add_iterations, rename_iterations, reschedule_iterations, remove_iterations. Removing options or iterations clears that value on every item: without confirm: true it only reports how many items would lose it.",
+        inputSchema: z.strictObject({
+          ...projectShape,
+          field: z.string().describe("Field name, e.g. 'Status'"),
+          name: z.string().min(1).optional().describe("New field name"),
+          add_options: z.array(optionInSchema).optional(),
+          rename_options: z.record(z.string(), z.string()).optional().describe("Old name → new name, e.g. {\"In review\": \"Review\"}"),
+          edit_options: z
+            .record(z.string(), z.strictObject({ color: z.string().optional(), description: z.string().optional() }))
+            .optional()
+            .describe("Option name → new color and/or description"),
+          remove_options: z.array(z.string()).optional().describe("Option names to remove (their value is cleared on every item)"),
+          duration_days: z.number().int().optional().describe("Iteration field: length used for iterations added from now on"),
+          add_iterations: z.number().int().optional().describe("Iteration field: how many iterations to append after the last one"),
+          rename_iterations: z.record(z.string(), z.string()).optional().describe("Iteration field: old title → new title"),
+          reschedule_iterations: z
+            .record(z.string(), z.strictObject({ start_date: z.string().optional(), duration_days: z.number().int().optional() }))
+            .optional()
+            .describe("Iteration field: title → new start date (YYYY-MM-DD) and/or length in days"),
+          remove_iterations: z.array(z.string()).optional().describe("Iteration field: titles to remove (items in them lose the value)"),
+          confirm: confirmSchema,
+        }),
+      },
+      async (a, ctx) =>
+        withProjectScope(async () => {
+          const optionArgs = [a.add_options, a.rename_options, a.edit_options, a.remove_options].some((v) => v !== undefined);
+          const iterArgs = [a.duration_days, a.add_iterations, a.rename_iterations, a.reschedule_iterations, a.remove_iterations].some((v) => v !== undefined);
+          if (!optionArgs && !iterArgs && a.name === undefined) throw new Error("update_project_field needs at least one change: name, option changes or iteration changes.");
+          const rp = await resolveProject(ctx.http?.authInfo, a.account, a.owner, a.number);
+          requireWrite(rp);
+          const f = findEditableField(rp.project, a.field);
+          if (optionArgs && f.dataType !== "SINGLE_SELECT") throw new Error(`'${f.name}' is a ${f.dataType.toLowerCase()} field; option changes only apply to single-select fields. Nothing was changed.`);
+          if (iterArgs && f.dataType !== "ITERATION") throw new Error(`'${f.name}' is a ${f.dataType.toLowerCase()} field; iteration changes only apply to iteration fields. Nothing was changed.`);
+          if (a.name !== undefined && a.name.trim().toLowerCase() !== f.name.toLowerCase() && fieldNameTaken(rp.project, a.name)) {
+            throw new Error(`Project '${rp.project.title}' already has a field named '${a.name}'. Nothing was changed.`);
+          }
+
+          const input: Record<string, unknown> = { fieldId: f.id };
+          if (a.name !== undefined) input.name = a.name.trim();
+          let removed: string[] = [];
+          let added: string[] = [];
+          if (optionArgs) {
+            const r = buildOptions(f, { add: a.add_options, rename: a.rename_options, remove: a.remove_options, edit: a.edit_options });
+            input.singleSelectOptions = r.options;
+            removed = r.removed;
+          }
+          if (iterArgs) {
+            const r = buildIterations(f, {
+              duration_days: a.duration_days,
+              add: a.add_iterations,
+              rename: a.rename_iterations,
+              reschedule: a.reschedule_iterations,
+              remove: a.remove_iterations,
+            });
+            input.iterationConfiguration = r.config;
+            removed = r.removed;
+            added = r.added;
+          }
+
+          if (removed.length) {
+            const lose = countValues(await allItems(rp), f.name, removed);
+            const what = `${removed.map((x) => `'${x}'`).join(", ")} from '${f.name}': ${lose} item(s) would lose that value`;
+            if (!a.confirm) return { content: [{ type: "text", text: `Would remove ${what}.\n${CONFIRM_HINT}` }] };
+          }
+
+          await rp.octokit.graphql(UPDATE_FIELD_DEF_MUTATION, { input });
+          const p = await reloadProject(rp);
+          const lines = [`Field '${f.name}' updated on project ${rp.owner}#${a.number} · account: ${rp.accountName}`];
+          if (removed.length) lines.push(`Removed: ${removed.join(", ")}`);
+          if (added.length) lines.push(`Added: ${added.join(", ")}`);
+          lines.push(fieldLine(p, (input.name as string | undefined) ?? f.name));
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        })
+    );
+
+    server.registerTool(
+      "delete_project_field",
+      {
+        description: "Deletes a custom field from a GitHub Project, with its value on every item. Built-in fields can't be deleted. Without confirm: true it only reports how many items have a value in it.",
+        inputSchema: z.strictObject({ ...projectShape, field: z.string().describe("Field name"), confirm: confirmSchema }),
+      },
+      async ({ account, owner, number, field, confirm }, ctx) =>
+        withProjectScope(async () => {
+          const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
+          requireWrite(rp);
+          const f = findEditableField(rp.project, field);
+          const withValue = countValues(await allItems(rp), f.name);
+          const impact = `field '${f.name}' (${f.dataType.toLowerCase()}) from project ${rp.owner}#${number}: ${withValue} item(s) have a value in it`;
+          if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
+          await rp.octokit.graphql(DELETE_FIELD_MUTATION, { fieldId: f.id });
+          return { content: [{ type: "text", text: `Deleted ${impact} · account: ${rp.accountName}` }] };
         })
     );
 

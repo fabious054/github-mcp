@@ -214,3 +214,4 @@ comments, grouped by mode.
 - [0018 — Activity breakdown in batches with a privacy-preserving cache](./adr/0018-activity-breakdown-batches-and-cache.md)
 - [0019 — Projects (v2) board tools: `project` scope, fields by name](./adr/0019-projects-v2-board-tools.md)
 - [0020 — Issue management via GraphQL: one atomic write, add/remove computed server-side](./adr/0020-issue-management-graphql.md)
+- [0021 — Board structure tools: confirmation before deletes, option and iteration lists rebuilt with their IDs](./adr/0021-board-structure-tools.md)
