@@ -64,6 +64,16 @@ export function checkViewName(views: View[], name: string, project: string, exce
   return n;
 }
 
+// GitHub refuses visible fields on roadmap views ("Roadmap views do not
+// support visible fields"), found in the #125 live run: checked before any
+// write so the refusal is clear and nothing is half-applied.
+export const ROADMAP_NO_FIELDS =
+  "Roadmap views don't support visible fields (a GitHub rule). Nothing was changed. Leave out visible_fields, or set them while the view is a table or board and switch to roadmap in a separate call.";
+
+export function checkLayoutFields(layout: string, visibleFields: string[] | undefined): void {
+  if (visibleFields !== undefined && (layout === "roadmap" || layout === "ROADMAP_LAYOUT")) throw new Error(ROADMAP_NO_FIELDS);
+}
+
 // Visible fields by name → field IDs, in the order given. Every unknown name
 // is reported at once with the valid ones.
 export function resolveVisibleFields(fields: Field[], names: string[], project: string): { id: string; name: string }[] {
