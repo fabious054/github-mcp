@@ -93,6 +93,7 @@ import {
   MOVE_ITEM_MUTATION,
   UNARCHIVE_ITEM_MUTATION,
   UPDATE_FIELD_MUTATION,
+  archivedStatesFor,
   formatItem,
   formatProject,
   isMissingProjectScope,
@@ -2000,7 +2001,12 @@ const rawHandler = createMcpHandler(
           const rp = await resolveProject(ctx.http?.authInfo, account, owner, number);
           const res = await rp.octokit.graphql<{
             node: { items: { totalCount: number; pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: Item[] } } | null;
-          }>(LIST_ITEMS_QUERY, { id: rp.project.id, first: 100, after: after ?? null });
+          }>(LIST_ITEMS_QUERY, {
+            id: rp.project.id,
+            first: 100,
+            after: after ?? null,
+            archivedStates: archivedStatesFor(include_archived),
+          });
           const conn = res.node?.items;
           const nodes = (conn?.nodes ?? []).filter((i) => (include_archived || !i.isArchived) && matchesFilter(i, f));
           const lines = [
