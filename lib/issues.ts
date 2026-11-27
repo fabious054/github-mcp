@@ -106,7 +106,8 @@ const quoted = (xs: string[]) => (xs.length ? xs.map((x) => `'${x}'`).join(", ")
 const norm = (s: string) => s.trim().toLowerCase();
 
 // Resolves names to IDs, case-insensitively. Collects every unknown name so
-// the caller sees all mistakes at once; nothing is written on error.
+// the caller sees all mistakes at once; nothing is written on error. `kind`
+// is singular ("Label"); it is pluralized when more than one name is unknown.
 export function resolveNames(kind: string, repo: string, all: Named[], names: string[]): Named[] {
   const out: Named[] = [];
   const missing: string[] = [];
@@ -116,13 +117,14 @@ export function resolveNames(kind: string, repo: string, all: Named[], names: st
     else missing.push(n);
   }
   if (missing.length) {
-    throw new Error(`${kind} ${quoted(missing)} not found in ${repo}. Available: ${quoted(all.map((x) => x.name))}. Nothing was changed.`);
+    const what = missing.length === 1 ? kind : `${kind}s`;
+    throw new Error(`${what} ${quoted(missing)} not found in ${repo}. Available: ${quoted(all.map((x) => x.name))}. Nothing was changed.`);
   }
   return out;
 }
 
 export function resolveLabels(ctx: RepoContext, names: string[]): Named[] {
-  return resolveNames(names.length === 1 ? "Label" : "Labels", ctx.nameWithOwner, ctx.labels.nodes, names);
+  return resolveNames("Label", ctx.nameWithOwner, ctx.labels.nodes, names);
 }
 
 export function resolveMilestone(ctx: RepoContext, title: string): { id: string; title: string } {

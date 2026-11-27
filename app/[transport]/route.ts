@@ -1525,18 +1525,32 @@ const rawHandler = createMcpHandler(
             milestoneId,
             issueTypeId,
             parentIssueId: parentRef?.id,
-            projectV2Ids: rp ? [rp.project.id] : undefined,
           },
         });
         const issue = res.createIssue.issue;
         const lines = [`Issue #${issue.number} created: ${issue.url} · account: ${rr.accountName}`];
 
+        // Added with addProjectV2ItemById, which returns the item ID: reading
+        // the issue's project items right after creating it can miss the new
+        // link (read-after-write lag, #113).
         if (rp) {
-          lines.push(`Added to project ${rp.owner}#${rp.project.number} (${rp.project.title}).`);
-          if (project?.fields && Object.keys(project.fields).length) {
+          const board = `project ${rp.owner}#${rp.project.number} (${rp.project.title})`;
+          let itemId: string | undefined;
+          try {
+            const added = await withProjectScope(() =>
+              rp.octokit.graphql<{ addProjectV2ItemById: { item: { id: string } } }>(ADD_ITEM_MUTATION, {
+                projectId: rp.project.id,
+                contentId: issue.id,
+              })
+            );
+            itemId = added.addProjectV2ItemById.item.id;
+            lines.push(`Added to ${board}.`);
+          } catch (err) {
+            lines.push(`⚠ The issue was created, but adding it to ${board} failed: ${(err as Error).message} Add it with add_project_item.`);
+          }
+          if (itemId && project?.fields && Object.keys(project.fields).length) {
             try {
-              const itemId = await withProjectScope(() => resolveItemId(rp, `${o}/${r}#${issue.number}`));
-              const set = await withProjectScope(() => setFields(rp, itemId, project.fields!));
+              const set = await withProjectScope(() => setFields(rp, itemId!, project.fields!));
               lines.push(`Project fields: ${set.join(" · ")}`);
             } catch (err) {
               lines.push(
