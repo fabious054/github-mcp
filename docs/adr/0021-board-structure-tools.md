@@ -1,7 +1,7 @@
 # ADR 0021: Board structure tools — confirmation before deletes, option and iteration lists rebuilt with their IDs
 
 ## Status
-Accepted (2026-11-27). Piece 3a implemented in issue #116 (phase 3 of board management). Pieces 3b (labels, milestones, issue types) and 3c (views, status updates) follow the same rules.
+Accepted (2026-11-27). Piece 3a implemented in issue #116 (phase 3 of board management), piece 3b (labels, milestones, issue types) in issue #121. Piece 3c (views, status updates) follows the same rules.
 
 ## Context
 
@@ -60,3 +60,28 @@ Two properties of GitHub's GraphQL API shape the design:
   mistake before release: an iteration configuration has `startDay` (weekday),
   not `startDate`; the configuration's start date is taken from the first
   iteration.
+
+## Piece 3b — labels, milestones, issue types (issue #121)
+
+- **Labels and milestones use the REST API.** Milestones have no GraphQL
+  mutations at all; labels do (`createLabel`, `updateLabel`, `deleteLabel`),
+  but REST keeps both on the same path, matches them by name, and its
+  responses carry what the output needs (color, description, issue counts).
+  The delete impact for a label comes from GraphQL (`label(name)` → issues and
+  pull requests, open and closed), which REST doesn't count.
+- **Issue types use GraphQL** (`createIssueType`, `updateIssueType`,
+  `deleteIssueType`) and live on the organization, not the repository: the
+  tools take `org`. User accounts are refused with a clear message (as in
+  phase 2), and writes check `viewerCanAdminister` first so a non-owner gets
+  a clear refusal before anything is attempted.
+- **Delete impact for an issue type comes from search**
+  (`org:<org> is:issue type:"<name>"`): `IssueType.issues` needs a repository,
+  so there is no exact org-wide count. The output says the number comes from
+  search and can lag. Disabling (`update_issue_type enabled: false`) is offered
+  as the non-destructive alternative, like closing a milestone or a project.
+- **Names are unique per repository / organization, case-insensitively.**
+  Creating or renaming onto an existing name is refused before writing, with
+  the existing entry named.
+- **Milestone due dates are sent at noon UTC.** GitHub stores a timestamp and
+  shows a date; midnight UTC can show as the previous day in American time
+  zones.

@@ -154,6 +154,34 @@ import {
   newIterationConfig,
   parseColor,
 } from "../../lib/project-structure";
+import {
+  CREATE_ISSUE_TYPE_MUTATION,
+  DEFAULT_LABEL_COLOR,
+  DELETE_ISSUE_TYPE_MUTATION,
+  ISSUE_TYPE_COLORS,
+  LABEL_USAGE_QUERY,
+  NEEDS_ORG_OWNER,
+  ORG_ISSUE_TYPES_QUERY,
+  ORG_ONLY_TYPES,
+  UPDATE_ISSUE_TYPE_MUTATION,
+  checkName,
+  checkNameFree,
+  findByName,
+  formatIssueType,
+  formatLabel,
+  formatMilestone,
+  issueTypeSearch,
+  labelUsageText,
+  milestoneLabel,
+  parseDueOn,
+  parseLabelColor,
+  parseTypeColor,
+  type IssueType,
+  type Label,
+  type LabelUsage,
+  type Milestone,
+  type OrgIssueTypes,
+} from "../../lib/repo-structure";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -696,26 +724,65 @@ const nonEmpty = (xs: string[] | undefined) => (xs && xs.length ? xs : undefined
 async function resolveOwnerAccount(
   authInfo: { token: string; extra?: Record<string, unknown> } | undefined,
   accountName: string | undefined,
-  owner: string | undefined
+  owner: string | undefined,
+  purpose = "create projects in"
 ): Promise<{ octokit: Octokit; accountName: string; owner: string }> {
+  const missingOwner = purpose === "create projects in" ? "Missing 'owner': the user or organization that will own the project." : "Missing 'org': the organization to manage.";
   if (!authInfo) {
     const { name, config } = resolveStaticAccount(accountName, owner);
     const o = owner || config.defaultOwner;
-    if (!o) throw new Error("Missing 'owner': the user or organization that will own the project.");
+    if (!o) throw new Error(missingOwner);
     return { octokit: new Octokit({ auth: config.token }), accountName: name, owner: o };
   }
   const { primaryLogin, candidates } = await getOAuthCandidates(authInfo);
   const o = owner || primaryLogin;
-  if (!o) throw new Error("Missing 'owner': the user or organization that will own the project.");
+  if (!o) throw new Error(missingOwner);
   const pick =
     (accountName && candidates.find((c) => c.login.toLowerCase() === accountName.toLowerCase())) ||
     (!accountName && candidates.find((c) => c.login.toLowerCase() === o.toLowerCase())) ||
     (!accountName && candidates.length === 1 ? candidates[0] : undefined);
   if (!pick) {
     if (accountName) throw new Error(`Account '${accountName}' is not linked to your session. Available accounts: ${candidates.map((c) => c.login).join(", ")}.`);
-    throw new Error(`Several accounts are linked (${candidates.map((c) => c.login).join(", ")}) and none is '${o}'. Repeat the call with 'account' set to the one that can create projects in '${o}'.`);
+    throw new Error(`Several accounts are linked (${candidates.map((c) => c.login).join(", ")}) and none is '${o}'. Repeat the call with 'account' set to the one that can ${purpose} '${o}'.`);
   }
   return { octokit: new Octokit({ auth: pick.token }), accountName: pick.login, owner: o };
+}
+
+// ---------- Labels, milestones, issue types helpers (issue #121, ADR 0021) ----------
+
+async function repoLabels(octokit: Octokit, owner: string, repo: string): Promise<Label[]> {
+  const all = await octokit.paginate(octokit.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 });
+  return all.map((l) => ({ name: l.name, color: l.color, description: l.description ?? null }));
+}
+
+async function labelUsage(octokit: Octokit, owner: string, repo: string, label: string): Promise<LabelUsage | null> {
+  const res = await octokit.graphql<{ repository: { label: LabelUsage | null } | null }>(LABEL_USAGE_QUERY, { owner, name: repo, label });
+  return res.repository?.label ?? null;
+}
+
+async function repoMilestones(octokit: Octokit, owner: string, repo: string): Promise<Milestone[]> {
+  const all = await octokit.paginate(octokit.rest.issues.listMilestones, { owner, repo, state: "all", per_page: 100 });
+  return all.map((m) => ({
+    number: m.number,
+    title: m.title,
+    state: m.state,
+    description: m.description ?? null,
+    due_on: m.due_on ?? null,
+    open_issues: m.open_issues,
+    closed_issues: m.closed_issues,
+    html_url: m.html_url,
+  }));
+}
+
+// Organization issue types plus what the account may do with them. User
+// accounts are refused; writes also need an organization owner.
+async function orgIssueTypes(octokit: Octokit, org: string, accountName: string, forWrite: boolean) {
+  const res = await octokit.graphql<OrgIssueTypes>(ORG_ISSUE_TYPES_QUERY, { login: org });
+  const o = res.repositoryOwner;
+  if (!o) throw new Error(`'${org}' is not a GitHub organization this account can see.`);
+  if (o.__typename !== "Organization") throw new Error(ORG_ONLY_TYPES(o.login));
+  if (forWrite && !o.viewerCanAdminister) throw new Error(NEEDS_ORG_OWNER(o.login, accountName));
+  return { id: o.id, login: o.login, types: o.issueTypes?.nodes ?? [] };
 }
 
 async function ownerNodeId(octokit: Octokit, login: string): Promise<{ id: string; kind: string }> {

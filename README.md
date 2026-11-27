@@ -74,6 +74,9 @@ target. See [Available tools](#available-tools) below.
 - `create_project_field` — adds a text, number, date, single-select (with options) or iteration field (starts with 3 iterations by default, like GitHub's UI)
 - `update_project_field` — renames a field; adds, renames, recolors or removes options (Status included); edits iterations (add, rename, reschedule, remove) — removals report the impact first and need `confirm: true`: see [ADR 0021](./docs/adr/0021-board-structure-tools.md)
 - `delete_project_field` — deletes a custom field; without `confirm: true` it only reports how many items have a value
+- `list_labels` / `create_label` / `update_label` / `delete_label` — a repository's labels: create, rename, recolor, edit the description; deleting reports how many issues and PRs have it and needs `confirm: true`
+- `list_milestones` / `create_milestone` / `update_milestone` / `delete_milestone` — a repository's milestones: create, rename, description, due date, close or reopen; deleting reports how many issues and PRs would lose it and needs `confirm: true`
+- `list_issue_types` / `create_issue_type` / `update_issue_type` / `delete_issue_type` — an organization's issue types (organization owners only for changes): create, rename, color, description, enable or disable; deleting reports how many issues use it and needs `confirm: true`
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session

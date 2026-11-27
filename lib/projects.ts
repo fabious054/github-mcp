@@ -37,7 +37,7 @@ export const GET_PROJECT_QUERY = `query($login: String!, $number: Int!) {
   repositoryOwner(login: $login) {
     ... on ProjectV2Owner {
       projectV2(number: $number) {
-        id number title url closed shortDescription viewerCanUpdate
+        id number title url closed template shortDescription viewerCanUpdate
         items { totalCount }
         ${PROJECT_FIELDS_FRAGMENT}
         repositories(first: 20) { nodes { nameWithOwner } }
@@ -152,6 +152,7 @@ export type Project = {
   title: string;
   url: string;
   closed: boolean;
+  template?: boolean;
   shortDescription?: string | null;
   viewerCanUpdate?: boolean;
   items: { totalCount: number };
@@ -345,7 +346,7 @@ export function resolveValue(project: Project, fieldName: string, raw: string | 
 
 export function formatProject(p: Project, owner: string, today = new Date().toISOString().slice(0, 10)): string {
   const lines = [
-    `Project ${owner}#${p.number}: ${p.title}${p.closed ? " (closed)" : ""}`,
+    `Project ${owner}#${p.number}: ${p.title}${p.closed ? " (closed)" : ""}${p.template ? " · template" : ""}`,
     `URL: ${p.url}`,
     `Items: ${p.items.totalCount}${p.viewerCanUpdate === false ? " · you can read but not edit this project" : ""}`,
   ];
