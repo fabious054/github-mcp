@@ -166,6 +166,17 @@ export const ORG_ONLY_TYPES = (login: string) =>
 export const NEEDS_ORG_OWNER = (login: string, account: string) =>
   `Account '${account}' can't manage issue types in '${login}': only organization owners can. Nothing was changed. If another linked account is an owner, repeat the call with 'account' set to it.`;
 
+// GitHub answers INSUFFICIENT_SCOPES on issue type writes when the token
+// lacks `admin:org` (tokens from before ADR 0022, or a self-hosted override).
+export const MISSING_ADMIN_ORG_MESSAGE =
+  "This account's GitHub authorization doesn't include organization administration yet (the 'admin:org' scope, added to the connector on 2026-11-27 for issue types). Reconnect the connector once to accept it; for an account linked with 'link_account', run 'link_account' again for that account. Nothing was changed; everything else keeps working meanwhile.";
+
+export function isInsufficientScopes(err: unknown): boolean {
+  const e = err as { errors?: { type?: string }[]; message?: string };
+  if (e.errors?.some((x) => x.type === "INSUFFICIENT_SCOPES")) return true;
+  return /INSUFFICIENT_SCOPES|has not been granted the required scopes|requires one of the following scopes/i.test(e.message ?? "");
+}
+
 export function formatIssueType(t: IssueType): string {
   return `${t.name} (${t.color.toLowerCase()})${t.isEnabled ? "" : " [disabled]"}${t.description ? ` — ${t.description}` : ""}`;
 }

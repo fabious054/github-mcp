@@ -215,3 +215,4 @@ comments, grouped by mode.
 - [0019 — Projects (v2) board tools: `project` scope, fields by name](./adr/0019-projects-v2-board-tools.md)
 - [0020 — Issue management via GraphQL: one atomic write, add/remove computed server-side](./adr/0020-issue-management-graphql.md)
 - [0021 — Board structure tools: confirmation before deletes, option and iteration lists rebuilt with their IDs](./adr/0021-board-structure-tools.md)
+- [0022 — `admin:org` in the default OAuth scope, for issue types](./adr/0022-admin-org-scope.md)
