@@ -368,7 +368,7 @@ export function formatProject(p: Project, owner: string, today = new Date().toIS
   const repos = p.repositories?.nodes ?? [];
   if (repos.length) lines.push("", `Linked repositories: ${repos.map((r) => r.nameWithOwner).join(", ")}`);
   const views = p.views?.nodes ?? [];
-  if (views.length) lines.push(`Views (read-only): ${views.map((v) => `${v.name} [${v.layout.replace("_LAYOUT", "").toLowerCase()}]`).join(", ")}`);
+  if (views.length) lines.push(`Views (details: list_project_views): ${views.map((v) => `${v.name} [${v.layout.replace("_LAYOUT", "").toLowerCase()}]`).join(", ")}`);
   return lines.join("\n");
 }
 

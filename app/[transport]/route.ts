@@ -184,6 +184,30 @@ import {
   type Milestone,
   type OrgIssueTypes,
 } from "../../lib/repo-structure";
+import {
+  CREATE_STATUS_MUTATION,
+  CREATE_VIEW_MUTATION,
+  DELETE_STATUS_MUTATION,
+  DELETE_VIEW_MUTATION,
+  PROJECT_VIEWS_QUERY,
+  STATUS_UPDATES_QUERY,
+  STATUS_VALUES,
+  UPDATE_STATUS_MUTATION,
+  UPDATE_VIEW_MUTATION,
+  VIEW_API_LIMIT,
+  VIEW_LAYOUTS,
+  checkViewName,
+  findStatusUpdate,
+  findView,
+  formatStatusUpdate,
+  formatView,
+  layoutEnum,
+  parseDate,
+  resolveVisibleFields,
+  statusEnum,
+  type StatusUpdate,
+  type View,
+} from "../../lib/project-views";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -2484,7 +2508,12 @@ const rawHandler = createMcpHandler(
           const conn = res.repositoryOwner?.projectsV2;
           if (!res.repositoryOwner) throw new Error(`'${o}' is not a GitHub user or organization this account can see.`);
           const nodes = (conn?.nodes ?? []).filter((p) => include_closed || !p.closed);
-          const lines = [`Projects of ${res.repositoryOwner.login} · account: ${acc.login} · ${conn?.totalCount ?? 0} total${include_closed ? "" : " (closed hidden)"}`];
+          // #125: say how many are shown, so hidden closed projects don't look missing.
+          const hidden = (conn?.nodes.length ?? 0) - nodes.length;
+          const count = include_closed
+            ? `${conn?.totalCount ?? 0} total`
+            : `${nodes.length} open shown · ${conn?.totalCount ?? 0} total${hidden ? ` (${hidden} closed hidden${conn?.pageInfo.hasNextPage ? " on this page" : ""}; include_closed: true shows them)` : ""}`;
+          const lines = [`Projects of ${res.repositoryOwner.login} · account: ${acc.login} · ${count}`];
           for (const p of nodes) {
             lines.push(`  #${p.number} ${p.title}${p.closed ? " (closed)" : ""} · ${p.items.totalCount} items · updated ${p.updatedAt.slice(0, 10)} · ${p.url}`);
           }

@@ -1,7 +1,7 @@
 # ADR 0021: Board structure tools — confirmation before deletes, option and iteration lists rebuilt with their IDs
 
 ## Status
-Accepted (2026-11-27). Piece 3a implemented in issue #116 (phase 3 of board management), piece 3b (labels, milestones, issue types) in issue #121. Piece 3c (views, status updates) follows the same rules.
+Accepted (2026-11-27). Piece 3a implemented in issue #116 (phase 3 of board management), piece 3b (labels, milestones, issue types) in issue #121, piece 3c (views, status updates) in issue #125.
 
 ## Context
 
@@ -86,3 +86,21 @@ Two properties of GitHub's GraphQL API shape the design:
 - **Milestone due dates are sent at noon UTC.** GitHub stores a timestamp and
   shows a date; midnight UTC can show as the previous day in American time
   zones.
+
+## Piece 3c — views and status updates (issue #125)
+
+- **Views are limited to what GitHub's API sets:** name, layout (table, board,
+  roadmap), filter and visible fields. Grouping, sorting, column widths and
+  field sums can only be set in the web UI; every view tool says so, so a
+  request for them isn't silently ignored.
+- **`createProjectV2View` has no filter argument.** A filter given to
+  `create_project_view` is applied with `updateProjectV2View` right after; if
+  that second call fails, the output says the view was created without the
+  filter (the same honesty rule as multi-call writes in phases 1–2).
+- **Visible fields are the full list, in order**, by name; unknown names are
+  refused with the valid ones. A project's last view can't be deleted.
+- **Status updates are identified by `latest` or by ID.** They have no name
+  or number, so `list_project_status_updates` shows each ID. Deleting the
+  newest update reports which update becomes the current status.
+- **`list_projects`** now says how many open projects are shown next to the
+  total, so hidden closed projects don't look missing.
