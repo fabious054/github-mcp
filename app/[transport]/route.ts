@@ -209,6 +209,7 @@ import {
   type StatusUpdate,
   type View,
 } from "../../lib/project-views";
+import { withWorkflowScope } from "../../lib/workflow-scope";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -1140,15 +1141,17 @@ const rawHandler = createMcpHandler(
           if (err.status !== 404) throw err;
         }
 
-        const result = await octokit.repos.createOrUpdateFileContents({
-          owner: o,
-          repo: r,
-          path,
-          message,
-          content: Buffer.from(content, "utf-8").toString("base64"),
-          branch,
-          sha,
-        });
+        const result = await withWorkflowScope([path], () =>
+          octokit.repos.createOrUpdateFileContents({
+            owner: o,
+            repo: r,
+            path,
+            message,
+            content: Buffer.from(content, "utf-8").toString("base64"),
+            branch,
+            sha,
+          })
+        );
 
         const commitSha = result.data.commit.sha;
         return {
@@ -1185,16 +1188,19 @@ const rawHandler = createMcpHandler(
         }
         const currentContent = Buffer.from(existing.data.content, "base64").toString("utf-8");
         const patchedContent = applyUnifiedPatch(currentContent, patch);
+        const fileSha = existing.data.sha;
 
-        const result = await octokit.repos.createOrUpdateFileContents({
-          owner: o,
-          repo: r,
-          path,
-          message,
-          content: Buffer.from(patchedContent, "utf-8").toString("base64"),
-          branch,
-          sha: existing.data.sha,
-        });
+        const result = await withWorkflowScope([path], () =>
+          octokit.repos.createOrUpdateFileContents({
+            owner: o,
+            repo: r,
+            path,
+            message,
+            content: Buffer.from(patchedContent, "utf-8").toString("base64"),
+            branch,
+            sha: fileSha,
+          })
+        );
 
         const commitSha = result.data.commit.sha;
         return {
@@ -1415,7 +1421,7 @@ const rawHandler = createMcpHandler(
       },
       async ({ account, owner, repo, branch, sha, force }, ctx) => {
         const { owner: o, repo: r, octokit } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
-        await octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha, force });
+        await withWorkflowScope([], () => octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha, force }));
         return { content: [{ type: "text", text: `Branch '${branch}' now points to ${sha}.` }] };
       }
     );
@@ -1448,7 +1454,10 @@ const rawHandler = createMcpHandler(
           parents: [parentSha],
           message,
         });
-        await octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha: commit.data.sha });
+        await withWorkflowScope(
+          files.map((f) => f.path),
+          () => octokit.git.updateRef({ owner: o, repo: r, ref: `heads/${branch}`, sha: commit.data.sha })
+        );
 
         return {
           content: [

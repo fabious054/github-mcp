@@ -196,8 +196,8 @@ export default function Home() {
             <div className="trust-card">
               <h3>What it asks GitHub for</h3>
               <p>
-                <code>repo</code>, <code>project</code> and{" "}
-                <code>admin:org</code>. GitHub still checks your own role on
+                <code>repo</code>, <code>project</code>,{" "}
+                <code>admin:org</code> and <code>workflow</code>. GitHub still checks your own role on
                 every call: the connector never does more than you can.
               </p>
               <a href={`${REPO_URL}/blob/main/README.md#what-the-connector-asks-github-for`}>

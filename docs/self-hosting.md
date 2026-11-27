@@ -216,3 +216,4 @@ comments, grouped by mode.
 - [0020 — Issue management via GraphQL: one atomic write, add/remove computed server-side](./adr/0020-issue-management-graphql.md)
 - [0021 — Board structure tools: confirmation before deletes, option and iteration lists rebuilt with their IDs](./adr/0021-board-structure-tools.md)
 - [0022 — `admin:org` in the default OAuth scope, for issue types](./adr/0022-admin-org-scope.md)
+- [0023 — `workflow` in the default OAuth scope, for files under .github/workflows/](./adr/0023-workflow-scope.md)

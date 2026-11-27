@@ -11,14 +11,16 @@ vulnerabilidade.
 - Toda pessoa que conecta autentica com a **própria** conta do GitHub, por
   um fluxo real de OAuth ("Autorizar") — não existe token manual pra gerar
   nem credencial compartilhada.
-- O connector pede ao GitHub os escopos `repo`, `project` e `admin:org`
+- O connector pede ao GitHub os escopos `repo`, `project`, `admin:org` e `workflow`
   (veja "O que o connector pede ao GitHub" no
   [README](./README.pt-br.md)). O GitHub continua aplicando o papel do
   próprio usuário em toda chamada, mas um token com `admin:org` tem poder de
   dono sobre todas as organizações das quais o usuário é dono — então um
   token de sessão vazado é mais sensível do que um limitado a repositórios.
   As proteções abaixo valem para ele sem mudança. Veja o
-  [ADR 0022](./docs/adr/0022-admin-org-scope.md).
+  [ADR 0022](./docs/adr/0022-admin-org-scope.md). O `workflow` permite que o
+  token altere workflows do GitHub Actions, que rodam com os segredos do
+  repositório — veja o [ADR 0023](./docs/adr/0023-workflow-scope.md).
 - Cada usuário do GitHub tem **um** token deste app, compartilhado por todos
   os lugares de onde ele conecta (Claude na web, no computador, no celular,
   sessões na nuvem). O GitHub permite só 10 tokens por usuário e app e revoga
