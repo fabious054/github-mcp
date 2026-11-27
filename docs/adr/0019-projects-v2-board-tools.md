@@ -1,7 +1,7 @@
 # ADR 0019: GitHub Projects (v2) board tools — `project` scope for everyone, fields by name
 
 ## Status
-Accepted (2026-11-27). Implemented in issue #104 (phase 1 of board management).
+Accepted (2026-11-27). Implemented in issue #104 (phase 1 of board management). The default scope was later widened from `read:org` to `admin:org` for issue types: see ADR 0022.
 
 ## Context
 

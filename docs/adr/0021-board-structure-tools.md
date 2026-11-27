@@ -73,7 +73,8 @@ Two properties of GitHub's GraphQL API shape the design:
   `deleteIssueType`) and live on the organization, not the repository: the
   tools take `org`. User accounts are refused with a clear message (as in
   phase 2), and writes check `viewerCanAdminister` first so a non-owner gets
-  a clear refusal before anything is attempted.
+  a clear refusal before anything is attempted. Writes also need the
+  `admin:org` scope, found missing in the live run: see ADR 0022.
 - **Delete impact for an issue type comes from search**
   (`org:<org> is:issue type:"<name>"`): `IssueType.issues` needs a repository,
   so there is no exact org-wide count. The output says the number comes from

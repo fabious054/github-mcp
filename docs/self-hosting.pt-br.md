@@ -224,3 +224,4 @@ agrupada por modo.
 - [0019 — Ferramentas de board (Projects v2): escopo `project`, campos pelo nome](./adr/0019-projects-v2-board-tools.md)
 - [0020 — Gestão de issues via GraphQL: uma gravação atômica, adicionar/remover calculado no servidor](./adr/0020-issue-management-graphql.md)
 - [0021 — Ferramentas de estrutura do board: confirmação antes de apagar, listas de opções e iterações refeitas com os IDs](./adr/0021-board-structure-tools.md)
+- [0022 — `admin:org` no escopo OAuth padrão, para tipos de issue](./adr/0022-admin-org-scope.md)

@@ -160,6 +160,7 @@ import {
   DELETE_ISSUE_TYPE_MUTATION,
   ISSUE_TYPE_COLORS,
   LABEL_USAGE_QUERY,
+  MISSING_ADMIN_ORG_MESSAGE,
   NEEDS_ORG_OWNER,
   ORG_ISSUE_TYPES_QUERY,
   ORG_ONLY_TYPES,
@@ -170,6 +171,7 @@ import {
   formatIssueType,
   formatLabel,
   formatMilestone,
+  isInsufficientScopes,
   issueTypeSearch,
   labelUsageText,
   milestoneLabel,
@@ -783,6 +785,17 @@ async function orgIssueTypes(octokit: Octokit, org: string, accountName: string,
   if (o.__typename !== "Organization") throw new Error(ORG_ONLY_TYPES(o.login));
   if (forWrite && !o.viewerCanAdminister) throw new Error(NEEDS_ORG_OWNER(o.login, accountName));
   return { id: o.id, login: o.login, types: o.issueTypes?.nodes ?? [] };
+}
+
+// Issue type writes need `admin:org` (ADR 0022): turn GitHub's raw scope
+// error into the reconnect message.
+async function issueTypeWrite<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isInsufficientScopes(err)) throw new Error(MISSING_ADMIN_ORG_MESSAGE);
+    throw err;
+  }
 }
 
 async function ownerNodeId(octokit: Octokit, login: string): Promise<{ id: string; kind: string }> {
@@ -3195,7 +3208,7 @@ const rawHandler = createMcpHandler(
     server.registerTool(
       "create_issue_type",
       {
-        description: "Creates an issue type in an organization (organization owners only). It becomes available in every repository of the organization.",
+        description: "Creates an issue type in an organization (organization owners only; needs the admin:org scope, ADR 0022). It becomes available in every repository of the organization.",
         inputSchema: z.strictObject({
           ...orgShape,
           name: z.string().describe("Issue type name"),
@@ -3213,7 +3226,7 @@ const rawHandler = createMcpHandler(
         const input: Record<string, unknown> = { ownerId: o.id, name: n, isEnabled: enabled };
         if (description !== undefined) input.description = description;
         if (c) input.color = c;
-        const res = await oa.octokit.graphql<{ createIssueType: { issueType: IssueType } }>(CREATE_ISSUE_TYPE_MUTATION, { input });
+        const res = await issueTypeWrite(() => oa.octokit.graphql<{ createIssueType: { issueType: IssueType } }>(CREATE_ISSUE_TYPE_MUTATION, { input }));
         return { content: [{ type: "text", text: `Issue type created in ${o.login} · account: ${oa.accountName}\n  ${formatIssueType(res.createIssueType.issueType)}` }] };
       }
     );
@@ -3244,7 +3257,7 @@ const rawHandler = createMcpHandler(
         if (description !== undefined) input.description = description;
         if (c) input.color = c;
         if (enabled !== undefined) input.isEnabled = enabled;
-        const res = await oa.octokit.graphql<{ updateIssueType: { issueType: IssueType } }>(UPDATE_ISSUE_TYPE_MUTATION, { input });
+        const res = await issueTypeWrite(() => oa.octokit.graphql<{ updateIssueType: { issueType: IssueType } }>(UPDATE_ISSUE_TYPE_MUTATION, { input }));
         return {
           content: [{ type: "text", text: `Issue type updated in ${o.login} · account: ${oa.accountName}\n  before: ${formatIssueType(current)}\n  after:  ${formatIssueType(res.updateIssueType.issueType)}` }],
         };
@@ -3270,7 +3283,7 @@ const rawHandler = createMcpHandler(
         }
         const impact = `issue type '${t.name}' from ${o.login}: ${usage}`;
         if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
-        await oa.octokit.graphql(DELETE_ISSUE_TYPE_MUTATION, { id: t.id });
+        await issueTypeWrite(() => oa.octokit.graphql(DELETE_ISSUE_TYPE_MUTATION, { id: t.id }));
         return { content: [{ type: "text", text: `Deleted ${impact} · account: ${oa.accountName}` }] };
       }
     );

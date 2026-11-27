@@ -77,7 +77,7 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `delete_project_field` — apaga um campo personalizado; sem `confirm: true` só mostra quantos itens têm valor nele
 - `list_labels` / `create_label` / `update_label` / `delete_label` — etiquetas de um repositório: criar, renomear, mudar a cor e a descrição; apagar mostra quantas issues e PRs têm a etiqueta e exige `confirm: true`
 - `list_milestones` / `create_milestone` / `update_milestone` / `delete_milestone` — marcos de um repositório: criar, renomear, descrição, data de entrega, fechar ou reabrir; apagar mostra quantas issues e PRs perderiam o marco e exige `confirm: true`
-- `list_issue_types` / `create_issue_type` / `update_issue_type` / `delete_issue_type` — tipos de issue de uma organização (alterar exige ser dono da organização): criar, renomear, cor, descrição, ativar ou desativar; apagar mostra quantas issues usam o tipo e exige `confirm: true`
+- `list_issue_types` / `create_issue_type` / `update_issue_type` / `delete_issue_type` — tipos de issue de uma organização (alterar exige ser dono da organização e o escopo `admin:org` — [ADR 0022](./docs/adr/0022-admin-org-scope.md)): criar, renomear, cor, descrição, ativar ou desativar; apagar mostra quantas issues usam o tipo e exige `confirm: true`
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão
@@ -251,6 +251,7 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0019 — Ferramentas de board (Projects v2): escopo `project`, campos pelo nome](./docs/adr/0019-projects-v2-board-tools.md)
 - [0020 — Gestão de issues via GraphQL: uma gravação atômica, adicionar/remover calculado no servidor](./docs/adr/0020-issue-management-graphql.md)
 - [0021 — Ferramentas de estrutura do board: confirmação antes de apagar, listas de opções e iterações refeitas com os IDs](./docs/adr/0021-board-structure-tools.md)
+- [0022 — `admin:org` no escopo OAuth padrão, para tipos de issue](./docs/adr/0022-admin-org-scope.md)
 
 ## Licença
 
