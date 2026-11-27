@@ -1,4 +1,5 @@
 import { getPublicOrigin, metadataCorsOptionsRequestHandler } from "mcp-handler";
+import { oauthScopes } from "../../../lib/scopes";
 
 export const runtime = "nodejs";
 
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 // endpoints, which under the hood proxy GitHub's OAuth.
 export async function GET(req: Request) {
   const origin = getPublicOrigin(req);
-  const scopes = (process.env.GITHUB_OAUTH_SCOPES || "repo read:org").split(" ");
+  const scopes = oauthScopes().split(" ");
 
   return Response.json(
     {

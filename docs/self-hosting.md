@@ -209,3 +209,7 @@ comments, grouped by mode.
 - [0013 — `unlink_account`: own links only, token revoked](./adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./adr/0014-long-token-lifetime.md)
 - [0015 — One GitHub token per user (GitHub's 10-token limit)](./adr/0015-one-token-per-user.md)
+- [0016 — Commit history tools, per-commit stats on request](./adr/0016-commit-history-stats.md)
+- [0017 — Person-level activity stats: GraphQL contributions, own accounts only](./adr/0017-person-level-activity-stats.md)
+- [0018 — Activity breakdown in batches with a privacy-preserving cache](./adr/0018-activity-breakdown-batches-and-cache.md)
+- [0019 — Projects (v2) board tools: `project` scope, fields by name](./adr/0019-projects-v2-board-tools.md)

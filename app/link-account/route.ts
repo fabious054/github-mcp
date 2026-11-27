@@ -1,5 +1,6 @@
 import { decryptJson, encryptJson, isFresh, nowSeconds, oauthErrorResponse, requireOAuthEnabled } from "../../lib/oauth";
 import { rateLimitOAuthRoute } from "../../lib/oauth-ratelimit";
+import { oauthScopes } from "../../lib/scopes";
 
 export const runtime = "nodejs";
 
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
   const githubClientId = process.env.GITHUB_OAUTH_CLIENT_ID!;
   const origin = new URL(req.url).origin;
   const callbackUrl = `${origin}/link-callback`;
-  const scope = process.env.GITHUB_OAUTH_SCOPES || "repo read:org";
+  const scope = oauthScopes();
 
   const asState = encryptJson({
     primaryLogin: linkState.primaryLogin,

@@ -56,6 +56,14 @@ qual conta vinculada usar pra cada repositório que você apontar. Veja
 - `search_commits` — os commits que você fez em todos os repositórios, por conta vinculada, com estatísticas por commit se pedido (só branches padrão)
 - `search_issues_prs` — os PRs e issues que você criou, revisou, mesclou, recebeu atribuídos ou comentou, em todos os repositórios, com totais por papel; `include_stats` acrescenta o tamanho de cada PR
 - `get_activity_breakdown` — quanto você alterou num período, incluindo repositórios privados: commits, linhas adicionadas/removidas, arquivos e PRs com o tamanho — totais, por repositório e por mês; períodos grandes são medidos por partes (chame de novo para continuar) — veja o [ADR 0018](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
+- `list_projects` — os Projects (boards) do GitHub de um usuário ou organização
+- `get_project` — campos de um project, opções de Status, iterações, repositórios vinculados e views
+- `list_project_items` — os itens de um board com todos os valores de campo, com filtro opcional por um deles (ex.: `Status=In progress`)
+- `add_project_item` — adiciona uma issue/PR ou um rascunho a um board, podendo já preencher campos
+- `update_project_item` — muda Status, Priority, datas, iteração e campos personalizados pelo nome, vários de uma vez
+- `move_project_item` — move um item para depois de outro, ou para o topo
+- `archive_project_item` / `unarchive_project_item` — arquiva ou restaura um item (mantém os campos)
+- `remove_project_item` — tira um item do board (a issue/PR em si não muda) — as ferramentas de board precisam do escopo `project`: veja o [ADR 0019](./docs/adr/0019-projects-v2-board-tools.md)
 - `whoami` — mostra qual identidade/conta está sendo usada na sessão atual
 - `link_account` — vincula uma conta ADICIONAL do GitHub à sua sessão
 - `list_accounts` — lista as contas vinculadas à sua sessão
@@ -223,6 +231,10 @@ Decisões de design relevantes ficam registradas como ADRs em
 - [0013 — `unlink_account`: own links only, token revoked](./docs/adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./docs/adr/0014-long-token-lifetime.md)
 - [0015 — One GitHub token per user (GitHub's 10-token limit)](./docs/adr/0015-one-token-per-user.md)
+- [0016 — Histórico de commits, estatísticas por commit sob demanda](./docs/adr/0016-commit-history-stats.md)
+- [0017 — Estatísticas da pessoa: contribuições via GraphQL, só as próprias contas](./docs/adr/0017-person-level-activity-stats.md)
+- [0018 — Divisão de atividade por partes, com cache que preserva privacidade](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
+- [0019 — Ferramentas de board (Projects v2): escopo `project`, campos pelo nome](./docs/adr/0019-projects-v2-board-tools.md)
 
 ## Licença
 

@@ -218,3 +218,7 @@ agrupada por modo.
 - [0013 — `unlink_account`: own links only, token revoked](./adr/0013-unlink-account.md)
 - [0014 — Access token lifetime: 8 hours → 10 years (never expires in practice)](./adr/0014-long-token-lifetime.md)
 - [0015 — One GitHub token per user (GitHub's 10-token limit)](./adr/0015-one-token-per-user.md)
+- [0016 — Histórico de commits, estatísticas por commit sob demanda](./adr/0016-commit-history-stats.md)
+- [0017 — Estatísticas da pessoa: contribuições via GraphQL, só as próprias contas](./adr/0017-person-level-activity-stats.md)
+- [0018 — Divisão de atividade por partes, com cache que preserva privacidade](./adr/0018-activity-breakdown-batches-and-cache.md)
+- [0019 — Ferramentas de board (Projects v2): escopo `project`, campos pelo nome](./adr/0019-projects-v2-board-tools.md)
