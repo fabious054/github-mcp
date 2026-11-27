@@ -154,6 +154,34 @@ import {
   newIterationConfig,
   parseColor,
 } from "../../lib/project-structure";
+import {
+  CREATE_ISSUE_TYPE_MUTATION,
+  DEFAULT_LABEL_COLOR,
+  DELETE_ISSUE_TYPE_MUTATION,
+  ISSUE_TYPE_COLORS,
+  LABEL_USAGE_QUERY,
+  NEEDS_ORG_OWNER,
+  ORG_ISSUE_TYPES_QUERY,
+  ORG_ONLY_TYPES,
+  UPDATE_ISSUE_TYPE_MUTATION,
+  checkName,
+  checkNameFree,
+  findByName,
+  formatIssueType,
+  formatLabel,
+  formatMilestone,
+  issueTypeSearch,
+  labelUsageText,
+  milestoneLabel,
+  parseDueOn,
+  parseLabelColor,
+  parseTypeColor,
+  type IssueType,
+  type Label,
+  type LabelUsage,
+  type Milestone,
+  type OrgIssueTypes,
+} from "../../lib/repo-structure";
 import { rateLimitMcp, recordFailedTokenVerification } from "../../lib/mcp-ratelimit";
 import { getClientIp } from "../../lib/ratelimit";
 import { audit, tokenFingerprint } from "../../lib/audit";
@@ -696,26 +724,65 @@ const nonEmpty = (xs: string[] | undefined) => (xs && xs.length ? xs : undefined
 async function resolveOwnerAccount(
   authInfo: { token: string; extra?: Record<string, unknown> } | undefined,
   accountName: string | undefined,
-  owner: string | undefined
+  owner: string | undefined,
+  purpose = "create projects in"
 ): Promise<{ octokit: Octokit; accountName: string; owner: string }> {
+  const missingOwner = purpose === "create projects in" ? "Missing 'owner': the user or organization that will own the project." : "Missing 'org': the organization to manage.";
   if (!authInfo) {
     const { name, config } = resolveStaticAccount(accountName, owner);
     const o = owner || config.defaultOwner;
-    if (!o) throw new Error("Missing 'owner': the user or organization that will own the project.");
+    if (!o) throw new Error(missingOwner);
     return { octokit: new Octokit({ auth: config.token }), accountName: name, owner: o };
   }
   const { primaryLogin, candidates } = await getOAuthCandidates(authInfo);
   const o = owner || primaryLogin;
-  if (!o) throw new Error("Missing 'owner': the user or organization that will own the project.");
+  if (!o) throw new Error(missingOwner);
   const pick =
     (accountName && candidates.find((c) => c.login.toLowerCase() === accountName.toLowerCase())) ||
     (!accountName && candidates.find((c) => c.login.toLowerCase() === o.toLowerCase())) ||
     (!accountName && candidates.length === 1 ? candidates[0] : undefined);
   if (!pick) {
     if (accountName) throw new Error(`Account '${accountName}' is not linked to your session. Available accounts: ${candidates.map((c) => c.login).join(", ")}.`);
-    throw new Error(`Several accounts are linked (${candidates.map((c) => c.login).join(", ")}) and none is '${o}'. Repeat the call with 'account' set to the one that can create projects in '${o}'.`);
+    throw new Error(`Several accounts are linked (${candidates.map((c) => c.login).join(", ")}) and none is '${o}'. Repeat the call with 'account' set to the one that can ${purpose} '${o}'.`);
   }
   return { octokit: new Octokit({ auth: pick.token }), accountName: pick.login, owner: o };
+}
+
+// ---------- Labels, milestones, issue types helpers (issue #121, ADR 0021) ----------
+
+async function repoLabels(octokit: Octokit, owner: string, repo: string): Promise<Label[]> {
+  const all = await octokit.paginate(octokit.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 });
+  return all.map((l) => ({ name: l.name, color: l.color, description: l.description ?? null }));
+}
+
+async function labelUsage(octokit: Octokit, owner: string, repo: string, label: string): Promise<LabelUsage | null> {
+  const res = await octokit.graphql<{ repository: { label: LabelUsage | null } | null }>(LABEL_USAGE_QUERY, { owner, name: repo, label });
+  return res.repository?.label ?? null;
+}
+
+async function repoMilestones(octokit: Octokit, owner: string, repo: string): Promise<Milestone[]> {
+  const all = await octokit.paginate(octokit.rest.issues.listMilestones, { owner, repo, state: "all", per_page: 100 });
+  return all.map((m) => ({
+    number: m.number,
+    title: m.title,
+    state: m.state,
+    description: m.description ?? null,
+    due_on: m.due_on ?? null,
+    open_issues: m.open_issues,
+    closed_issues: m.closed_issues,
+    html_url: m.html_url,
+  }));
+}
+
+// Organization issue types plus what the account may do with them. User
+// accounts are refused; writes also need an organization owner.
+async function orgIssueTypes(octokit: Octokit, org: string, accountName: string, forWrite: boolean) {
+  const res = await octokit.graphql<OrgIssueTypes>(ORG_ISSUE_TYPES_QUERY, { login: org });
+  const o = res.repositoryOwner;
+  if (!o) throw new Error(`'${org}' is not a GitHub organization this account can see.`);
+  if (o.__typename !== "Organization") throw new Error(ORG_ONLY_TYPES(o.login));
+  if (forWrite && !o.viewerCanAdminister) throw new Error(NEEDS_ORG_OWNER(o.login, accountName));
+  return { id: o.id, login: o.login, types: o.issueTypes?.nodes ?? [] };
 }
 
 async function ownerNodeId(octokit: Octokit, login: string): Promise<{ id: string; kind: string }> {
@@ -2925,6 +2992,287 @@ const rawHandler = createMcpHandler(
           await rp.octokit.graphql(DELETE_FIELD_MUTATION, { fieldId: f.id });
           return { content: [{ type: "text", text: `Deleted ${impact} · account: ${rp.accountName}` }] };
         })
+    );
+
+    // ---------- LABELS, MILESTONES, ISSUE TYPES (issue #121, ADR 0021) ----------
+
+    server.registerTool(
+      "list_labels",
+      {
+        description: "Lists a repository's labels: name, color and description.",
+        inputSchema: z.strictObject({ ...ownerRepoShape }),
+      },
+      async ({ account, owner, repo }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const labels = await repoLabels(octokit, o, r);
+        const lines = [`${labels.length} label(s) in ${o}/${r} · account: ${accountName}`, ...labels.map((l) => `  ${formatLabel(l)}`)];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "create_label",
+      {
+        description: "Creates a label in a repository. Color is 6 hex digits ('d73a4a' or '#d73a4a'; default GitHub's gray).",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          name: z.string().describe("Label name"),
+          color: z.string().optional().describe("6 hex digits, e.g. 'd73a4a' or '#d73a4a'"),
+          description: z.string().optional().describe("Short description (GitHub allows up to 100 characters)"),
+        }),
+      },
+      async ({ account, owner, repo, name, color, description }, ctx) => {
+        const n = checkName("Label", name);
+        const c = parseLabelColor(color) ?? DEFAULT_LABEL_COLOR;
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        checkNameFree("Label", `${o}/${r}`, await repoLabels(octokit, o, r), n, (l) => l.name);
+        const { data } = await octokit.rest.issues.createLabel({ owner: o, repo: r, name: n, color: c, ...(description !== undefined ? { description } : {}) });
+        return { content: [{ type: "text", text: `Label created in ${o}/${r} · account: ${accountName}\n  ${formatLabel({ name: data.name, color: data.color, description: data.description ?? null })}` }] };
+      }
+    );
+
+    server.registerTool(
+      "update_label",
+      {
+        description: "Changes a label: rename (issues and PRs keep it), color, description. Pass only what changes.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          label: z.string().describe("Current label name"),
+          new_name: z.string().optional().describe("New name"),
+          color: z.string().optional().describe("6 hex digits, e.g. 'd73a4a' or '#d73a4a'"),
+          description: z.string().optional().describe("New description ('' clears it)"),
+        }),
+      },
+      async ({ account, owner, repo, label, new_name, color, description }, ctx) => {
+        if (new_name === undefined && color === undefined && description === undefined) throw new Error("update_label needs at least one change: new_name, color or description.");
+        const c = parseLabelColor(color);
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const all = await repoLabels(octokit, o, r);
+        const current = findByName("Label", `${o}/${r}`, all, label, (l) => l.name);
+        const nn = new_name !== undefined ? checkName("Label", new_name) : undefined;
+        if (nn !== undefined) checkNameFree("Label", `${o}/${r}`, all, nn, (l) => l.name, current);
+        const { data } = await octokit.rest.issues.updateLabel({
+          owner: o,
+          repo: r,
+          name: current.name,
+          ...(nn !== undefined ? { new_name: nn } : {}),
+          ...(c !== undefined ? { color: c } : {}),
+          ...(description !== undefined ? { description } : {}),
+        });
+        const after: Label = { name: data.name, color: data.color, description: data.description ?? null };
+        return { content: [{ type: "text", text: `Label updated in ${o}/${r} · account: ${accountName}\n  before: ${formatLabel(current)}\n  after:  ${formatLabel(after)}` }] };
+      }
+    );
+
+    server.registerTool(
+      "delete_label",
+      {
+        description: "Deletes a label from a repository; it is removed from every issue and pull request that has it. Without confirm: true it only reports how many use it.",
+        inputSchema: z.strictObject({ ...ownerRepoShape, label: z.string().describe("Label name"), confirm: confirmSchema }),
+      },
+      async ({ account, owner, repo, label, confirm }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const current = findByName("Label", `${o}/${r}`, await repoLabels(octokit, o, r), label, (l) => l.name);
+        const impact = `label '${current.name}' from ${o}/${r}: it is ${labelUsageText(await labelUsage(octokit, o, r, current.name))}`;
+        if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
+        await octokit.rest.issues.deleteLabel({ owner: o, repo: r, name: current.name });
+        return { content: [{ type: "text", text: `Deleted ${impact} · account: ${accountName}` }] };
+      }
+    );
+
+    server.registerTool(
+      "list_milestones",
+      {
+        description: "Lists a repository's milestones: title, state, due date, progress (closed / total issues) and description.",
+        inputSchema: z.strictObject({ ...ownerRepoShape, state: z.enum(["open", "closed", "all"]).default("all") }),
+      },
+      async ({ account, owner, repo, state }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const all = (await repoMilestones(octokit, o, r)).filter((m) => state === "all" || m.state === state);
+        const lines = [`${all.length} milestone(s) in ${o}/${r}${state === "all" ? "" : ` (${state})`} · account: ${accountName}`, ...all.map((m) => `  ${formatMilestone(m)}`)];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "create_milestone",
+      {
+        description: "Creates a milestone in a repository, optionally with a description and a due date (YYYY-MM-DD).",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          title: z.string().describe("Milestone title"),
+          description: z.string().optional(),
+          due_on: z.string().optional().describe("Due date, YYYY-MM-DD"),
+        }),
+      },
+      async ({ account, owner, repo, title, description, due_on }, ctx) => {
+        const t = checkName("Milestone", title);
+        const due = parseDueOn(due_on);
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        checkNameFree("Milestone", `${o}/${r}`, await repoMilestones(octokit, o, r), t, (m) => m.title);
+        const { data } = await octokit.rest.issues.createMilestone({ owner: o, repo: r, title: t, ...(description !== undefined ? { description } : {}), ...(due ? { due_on: due } : {}) });
+        const m = (await repoMilestones(octokit, o, r)).find((x) => x.number === data.number);
+        return { content: [{ type: "text", text: `Milestone created in ${o}/${r} · account: ${accountName}\n  ${m ? formatMilestone(m) : data.title}\n  ${data.html_url}` }] };
+      }
+    );
+
+    server.registerTool(
+      "update_milestone",
+      {
+        description: "Changes a milestone: new title, description, due date (YYYY-MM-DD, or null to clear), close or reopen. Pass only what changes; issues keep the milestone.",
+        inputSchema: z.strictObject({
+          ...ownerRepoShape,
+          milestone: z.string().describe("Current milestone title"),
+          new_title: z.string().optional(),
+          description: z.string().optional().describe("New description ('' clears it)"),
+          due_on: z.string().nullable().optional().describe("Due date YYYY-MM-DD, or null to clear"),
+          state: z.enum(["open", "closed"]).optional().describe("'closed' closes it, 'open' reopens it"),
+        }),
+      },
+      async ({ account, owner, repo, milestone, new_title, description, due_on, state }, ctx) => {
+        if ([new_title, description, due_on, state].every((v) => v === undefined)) throw new Error("update_milestone needs at least one change: new_title, description, due_on or state.");
+        const due = parseDueOn(due_on);
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const all = await repoMilestones(octokit, o, r);
+        const current = findByName("Milestone", `${o}/${r}`, all, milestone, (m) => m.title);
+        const nt = new_title !== undefined ? checkName("Milestone", new_title) : undefined;
+        if (nt !== undefined) checkNameFree("Milestone", `${o}/${r}`, all, nt, (m) => m.title, current);
+        await octokit.rest.issues.updateMilestone({
+          owner: o,
+          repo: r,
+          milestone_number: current.number,
+          ...(nt !== undefined ? { title: nt } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(due !== undefined ? { due_on: due as string } : {}),
+          ...(state !== undefined ? { state } : {}),
+        });
+        const after = (await repoMilestones(octokit, o, r)).find((x) => x.number === current.number);
+        return {
+          content: [{ type: "text", text: `Milestone updated in ${o}/${r} · account: ${accountName}\n  before: ${formatMilestone(current)}\n  after:  ${after ? formatMilestone(after) : "(could not re-read it)"}` }],
+        };
+      }
+    );
+
+    server.registerTool(
+      "delete_milestone",
+      {
+        description: "Deletes a milestone; its issues and pull requests stay but lose the milestone. Without confirm: true it only reports how many would lose it. To keep it, use update_milestone state: 'closed' instead.",
+        inputSchema: z.strictObject({ ...ownerRepoShape, milestone: z.string().describe("Milestone title"), confirm: confirmSchema }),
+      },
+      async ({ account, owner, repo, milestone, confirm }, ctx) => {
+        const { owner: o, repo: r, octokit, accountName } = await resolveRepo(ctx.http?.authInfo, account, owner, repo);
+        const m = findByName("Milestone", `${o}/${r}`, await repoMilestones(octokit, o, r), milestone, (x) => x.title);
+        const impact = `milestone '${milestoneLabel(m)}' from ${o}/${r}: ${m.open_issues + m.closed_issues} issue(s) and pull request(s) have it (${m.open_issues} open) and lose it`;
+        if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
+        await octokit.rest.issues.deleteMilestone({ owner: o, repo: r, milestone_number: m.number });
+        return { content: [{ type: "text", text: `Deleted ${impact} · account: ${accountName}` }] };
+      }
+    );
+
+    const orgShape = {
+      account: z
+        .string()
+        .optional()
+        .describe("GitHub account login to use. Needed when several accounts are linked and none of them is the organization itself."),
+      org: z.string().describe("Organization login"),
+    };
+    const typeColorSchema = z.string().optional().describe(`One of: ${ISSUE_TYPE_COLORS.map((c) => c.toLowerCase()).join(", ")}`);
+
+    server.registerTool(
+      "list_issue_types",
+      {
+        description: "Lists an organization's issue types: name, color, enabled or not, description. Issue types exist only on organizations.",
+        inputSchema: z.strictObject({ ...orgShape }),
+      },
+      async ({ account, org }, ctx) => {
+        const oa = await resolveOwnerAccount(ctx.http?.authInfo, account, org, "read issue types of");
+        const { login, types } = await orgIssueTypes(oa.octokit, oa.owner, oa.accountName, false);
+        const lines = [`${types.length} issue type(s) in ${login} · account: ${oa.accountName}`, ...types.map((t) => `  ${formatIssueType(t)}`)];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    server.registerTool(
+      "create_issue_type",
+      {
+        description: "Creates an issue type in an organization (organization owners only). It becomes available in every repository of the organization.",
+        inputSchema: z.strictObject({
+          ...orgShape,
+          name: z.string().describe("Issue type name"),
+          description: z.string().optional(),
+          color: typeColorSchema,
+          enabled: z.boolean().default(true).describe("false creates it disabled (not offered on issues yet)"),
+        }),
+      },
+      async ({ account, org, name, description, color, enabled }, ctx) => {
+        const n = checkName("Issue type", name);
+        const c = parseTypeColor(color);
+        const oa = await resolveOwnerAccount(ctx.http?.authInfo, account, org, "manage issue types of");
+        const o = await orgIssueTypes(oa.octokit, oa.owner, oa.accountName, true);
+        checkNameFree("Issue type", o.login, o.types, n, (t) => t.name);
+        const input: Record<string, unknown> = { ownerId: o.id, name: n, isEnabled: enabled };
+        if (description !== undefined) input.description = description;
+        if (c) input.color = c;
+        const res = await oa.octokit.graphql<{ createIssueType: { issueType: IssueType } }>(CREATE_ISSUE_TYPE_MUTATION, { input });
+        return { content: [{ type: "text", text: `Issue type created in ${o.login} · account: ${oa.accountName}\n  ${formatIssueType(res.createIssueType.issueType)}` }] };
+      }
+    );
+
+    server.registerTool(
+      "update_issue_type",
+      {
+        description: "Changes an organization's issue type (organization owners only): rename (issues keep it), description, color, enable or disable. Pass only what changes.",
+        inputSchema: z.strictObject({
+          ...orgShape,
+          type: z.string().describe("Current issue type name"),
+          new_name: z.string().optional(),
+          description: z.string().optional().describe("New description ('' clears it)"),
+          color: typeColorSchema,
+          enabled: z.boolean().optional().describe("false disables it (no longer offered on issues; issues that have it keep it), true enables it"),
+        }),
+      },
+      async ({ account, org, type, new_name, description, color, enabled }, ctx) => {
+        if ([new_name, description, color, enabled].every((v) => v === undefined)) throw new Error("update_issue_type needs at least one change: new_name, description, color or enabled.");
+        const c = parseTypeColor(color);
+        const oa = await resolveOwnerAccount(ctx.http?.authInfo, account, org, "manage issue types of");
+        const o = await orgIssueTypes(oa.octokit, oa.owner, oa.accountName, true);
+        const current = findByName("Issue type", o.login, o.types, type, (t) => t.name);
+        const nn = new_name !== undefined ? checkName("Issue type", new_name) : undefined;
+        if (nn !== undefined) checkNameFree("Issue type", o.login, o.types, nn, (t) => t.name, current);
+        const input: Record<string, unknown> = { issueTypeId: current.id };
+        if (nn !== undefined) input.name = nn;
+        if (description !== undefined) input.description = description;
+        if (c) input.color = c;
+        if (enabled !== undefined) input.isEnabled = enabled;
+        const res = await oa.octokit.graphql<{ updateIssueType: { issueType: IssueType } }>(UPDATE_ISSUE_TYPE_MUTATION, { input });
+        return {
+          content: [{ type: "text", text: `Issue type updated in ${o.login} · account: ${oa.accountName}\n  before: ${formatIssueType(current)}\n  after:  ${formatIssueType(res.updateIssueType.issueType)}` }],
+        };
+      }
+    );
+
+    server.registerTool(
+      "delete_issue_type",
+      {
+        description: "Deletes an organization's issue type (organization owners only); issues that have it lose their type. Without confirm: true it only reports how many issues use it. To keep it, use update_issue_type enabled: false instead.",
+        inputSchema: z.strictObject({ ...orgShape, type: z.string().describe("Issue type name"), confirm: confirmSchema }),
+      },
+      async ({ account, org, type, confirm }, ctx) => {
+        const oa = await resolveOwnerAccount(ctx.http?.authInfo, account, org, "manage issue types of");
+        const o = await orgIssueTypes(oa.octokit, oa.owner, oa.accountName, true);
+        const t = findByName("Issue type", o.login, o.types, type, (x) => x.name);
+        let usage: string;
+        try {
+          const { data } = await oa.octokit.rest.search.issuesAndPullRequests({ q: issueTypeSearch(o.login, t.name), per_page: 1 });
+          usage = `${data.total_count} issue(s) visible to this account use it (from search; it can lag a few minutes)`;
+        } catch {
+          usage = "usage could not be counted (search unavailable)";
+        }
+        const impact = `issue type '${t.name}' from ${o.login}: ${usage}`;
+        if (!confirm) return { content: [{ type: "text", text: `Would delete ${impact}.\n${CONFIRM_HINT}` }] };
+        await oa.octokit.graphql(DELETE_ISSUE_TYPE_MUTATION, { id: t.id });
+        return { content: [{ type: "text", text: `Deleted ${impact} · account: ${oa.accountName}` }] };
+      }
     );
 
     // ---------- UTILITY ----------
