@@ -42,9 +42,13 @@ target. See [Available tools](#available-tools) below.
 - `update_pr` — edits a PR's title, description or target branch, and closes or reopens it (never merges)
 - `list_prs` — lists PRs
 - `comment_pr` — comments on a PR
+- `list_pr_comments` — a PR's conversation comments and inline review comments, with their IDs
+- `edit_comment` — replaces the text of an issue comment, a PR conversation comment or an inline review comment
 - `list_issues` — lists issues (board tasks)
-- `get_issue` — reads an issue in full: description and every comment, in order
-- `create_issue` — creates an issue
+- `get_issue` — reads an issue in full: state and close reason, labels, assignees, milestone, type, parent and sub-issues, description and every comment (with its ID), in order
+- `create_issue` — creates an issue, optionally with labels, assignees, milestone, type, parent issue and a project board with initial fields, in one call
+- `update_issue` — edits title/body, closes (completed, not planned, duplicate) or reopens, adds/removes labels and assignees, sets milestone and type — one atomic write: see [ADR 0020](./docs/adr/0020-issue-management-graphql.md)
+- `add_sub_issue` / `remove_sub_issue` — links or unlinks a sub-issue (also across repositories)
 - `comment_issue` — comments on an issue (e.g. final QA report)
 - `read_file` — reads a file's content on a branch (`branch`, or `ref` for a branch, tag or commit; default `main`)
 - `search_code` — searches code in the repository
@@ -229,6 +233,7 @@ Notable design decisions live as ADRs in [`docs/adr/`](./docs/adr/):
 - [0017 — Person-level activity stats: GraphQL contributions, own accounts only](./docs/adr/0017-person-level-activity-stats.md)
 - [0018 — Activity breakdown in batches with a privacy-preserving cache](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
 - [0019 — Projects (v2) board tools: `project` scope, fields by name](./docs/adr/0019-projects-v2-board-tools.md)
+- [0020 — Issue management via GraphQL: one atomic write, add/remove computed server-side](./docs/adr/0020-issue-management-graphql.md)
 
 ## License
 
