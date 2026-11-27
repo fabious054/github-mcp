@@ -6,32 +6,47 @@ const FEATURES = [
   {
     icon: "◆",
     title: "Branches & commits",
-    desc: "Create and delete branches, commit full files, or apply a unified diff to patch just a slice of one.",
-  },
-  {
-    icon: "▤",
-    title: "Git Data API",
-    desc: "Blob → tree → commit → ref, for large or multi-file changes in a single atomic commit.",
+    desc: "Create and delete branches, commit full files, apply a unified diff to patch just a slice of one, or group many files into one atomic commit.",
   },
   {
     icon: "⇄",
     title: "Pull requests",
-    desc: "Open, edit, close or reopen PRs, list them, and comment — the full review loop without leaving Claude.",
+    desc: "Open, edit, retarget, close or reopen PRs, comment, and read or edit inline review comments — the review loop without leaving Claude.",
   },
   {
     icon: "☰",
-    title: "Issues & board",
-    desc: "List, create, read in full with every comment, and comment on issues — including posting a final QA report.",
+    title: "Issues",
+    desc: "Create, edit, close as completed, not planned or duplicate, reopen, and organize: labels, assignees, milestone, type and sub-issues.",
+  },
+  {
+    icon: "▦",
+    title: "Boards",
+    desc: "See a GitHub Project board, add issues, PRs or drafts, and change Status, dates, iterations or any field by name — several at once.",
+  },
+  {
+    icon: "⊞",
+    title: "Board structure",
+    desc: "Projects, fields and options, iterations, views and status updates, plus labels, milestones and issue types. Every delete shows its impact first and needs confirmation.",
+  },
+  {
+    icon: "↗",
+    title: "Activity stats",
+    desc: "Commit history with lines changed, and your own activity across every repository you can reach — by period, repository and month, private repos included.",
   },
   {
     icon: "⌕",
     title: "Code search & read",
-    desc: "Read any file's content or search code across a repository.",
+    desc: "Read any file on any branch, tag or commit, or search code across a repository.",
+  },
+  {
+    icon: "▤",
+    title: "Git Data API",
+    desc: "Blob → tree → commit → ref, for large or multi-file changes, reusing unchanged files without resending them.",
   },
   {
     icon: "⚭",
     title: "Multi-account linking",
-    desc: "Link more than one GitHub account to the same session — the server picks the one that can write to each repository, and asks you whenever it can't tell for sure. Unlink an account when you stop using it.",
+    desc: "Link more than one GitHub account to the same session — the server picks the one that can write to each repository, and asks you whenever it can't tell for sure.",
   },
 ];
 
@@ -40,7 +55,7 @@ const jsonLd = {
   "@type": "SoftwareApplication",
   name: "GitHub MCP",
   description:
-    "An MCP server that gives Claude real GitHub access: branches, commits, pull requests, issues, and code search — authorized with your own GitHub login, never a shared token.",
+    "An MCP server that gives Claude real GitHub access: branches, commits, pull requests, issues, project boards and activity stats — authorized with your own GitHub login, never a shared token.",
   applicationCategory: "DeveloperApplication",
   operatingSystem: "Any (remote MCP server)",
   url: SITE_URL,
@@ -78,9 +93,9 @@ export default function Home() {
           <span className="eyebrow">Model Context Protocol server</span>
           <h1>Real GitHub access for Claude</h1>
           <p className="lead">
-            Create branches, commit, open and comment on pull requests,
-            manage issues, read files, and search code — every call runs
-            with your own GitHub account, never a shared one.
+            Commit code, run pull requests, organize issues, manage your
+            GitHub Project boards and see your activity stats — every call
+            runs with your own GitHub account, never a shared one.
           </p>
           <div className="cta-row">
             <a className="btn btn-primary" href="#connect">
@@ -131,9 +146,8 @@ export default function Home() {
         <section id="features">
           <h2>What it can do</h2>
           <p className="section-lead">
-            Twenty-seven tools covering the day-to-day GitHub workflow,
-            including four built specifically for working across more
-            than one account.
+            Seventy-eight tools covering the day-to-day GitHub workflow,
+            from a single commit to a whole project board.
           </p>
           <div className="features-grid">
             {FEATURES.map((f) => (
@@ -177,6 +191,17 @@ export default function Home() {
               </p>
               <a href={`${REPO_URL}/blob/main/docs/self-hosting.md`}>
                 Read the self-hosting guide →
+              </a>
+            </div>
+            <div className="trust-card">
+              <h3>What it asks GitHub for</h3>
+              <p>
+                <code>repo</code>, <code>project</code> and{" "}
+                <code>admin:org</code>. GitHub still checks your own role on
+                every call: the connector never does more than you can.
+              </p>
+              <a href={`${REPO_URL}/blob/main/README.md#what-the-connector-asks-github-for`}>
+                Why each permission →
               </a>
             </div>
           </div>

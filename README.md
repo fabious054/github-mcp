@@ -2,9 +2,23 @@
 
 *[Leia em português](./README.pt-br.md)*
 
-An MCP server that gives Claude real access to GitHub: create and delete
-branches, commit, open, edit and comment on PRs, list, create, read and comment
-on issues, read files, and search code.
+An MCP server that gives Claude real access to GitHub — 78 tools, every call
+made with your own GitHub login:
+
+- **Code:** branches, commits (single files, diffs or multi-file atomic
+  commits), reading files and searching code.
+- **Pull requests and issues:** open, edit, close and comment on PRs; create,
+  edit, close, reopen and organize issues — labels, assignees, milestone,
+  type and sub-issues.
+- **Boards (GitHub Projects):** see a board, add items and change any field
+  by name, and manage its structure — projects, fields and options,
+  iterations, views and status updates — plus repository labels, milestones
+  and organization issue types.
+- **Activity stats:** commit history with lines changed, and your own
+  activity across every repository you can reach, by period, repository and
+  month.
+- **Several GitHub accounts** on the same connector, with the right one
+  picked per repository.
 
 ## Connect to this instance
 
@@ -20,6 +34,22 @@ or deploy anything to use it.
 3. That's it. Every tool call runs with your own GitHub access — never a
    shared account.
 
+### What the connector asks GitHub for
+
+The "Authorize" screen asks for three permissions (OAuth scopes):
+
+| Scope | Why |
+|---|---|
+| `repo` | Read and write the repositories you can access: code, branches, PRs, issues, labels, milestones |
+| `project` | Read and change GitHub Projects (boards) |
+| `admin:org` | Change an organization's issue types (only where you are an owner); it also covers reading organization membership |
+
+GitHub still checks your own role on every call: the connector can never do
+more than you can. `admin:org` is the broadest of the three — see
+[ADR 0022](./docs/adr/0022-admin-org-scope.md) for why it is requested and
+[SECURITY.md](./SECURITY.md) for how tokens are protected. If you connected
+before a scope was added, the tools that need it tell you to reconnect.
+
 Want to use more than one GitHub account from the same connector (e.g. a
 personal account and an organization account)? Call the `link_account` tool
 — it walks you through linking additional accounts, and the server then
@@ -33,25 +63,37 @@ target. See [Available tools](#available-tools) below.
 
 ## Available tools
 
+### Branches, commits and files
+
 - `create_branch` — creates a branch from another one
 - `delete_branch` — deletes a branch; refuses the default branch, protected branches and branches with an open PR
 - `commit_file` — creates/updates a file with a commit message (full content, one file per call)
 - `patch_file` — applies a unified diff to an existing file on a branch, without resending the whole content
 - `get_branch_head` — reads the full (40-character) SHA of the commit a branch points to
+- `read_file` — reads a file's content on a branch (`branch`, or `ref` for a branch, tag or commit; default `main`)
+- `search_code` — searches code in the repository
+- `create_repo` — creates an empty repository for you or an organization; you always choose private or public (there is no tool to delete one)
+
+### Pull requests
+
 - `open_pr` — opens a Pull Request
 - `update_pr` — edits a PR's title, description or target branch, and closes or reopens it (never merges)
 - `list_prs` — lists PRs
 - `comment_pr` — comments on a PR
 - `list_pr_comments` — a PR's conversation comments and inline review comments, with their IDs
 - `edit_comment` — replaces the text of an issue comment, a PR conversation comment or an inline review comment
+
+### Issues
+
 - `list_issues` — lists issues (board tasks)
 - `get_issue` — reads an issue in full: state and close reason, labels, assignees, milestone, type, parent and sub-issues, description and every comment (with its ID), in order
 - `create_issue` — creates an issue, optionally with labels, assignees, milestone, type, parent issue and a project board with initial fields, in one call
 - `update_issue` — edits title/body, closes (completed, not planned, duplicate) or reopens, adds/removes labels and assignees, sets milestone and type — one atomic write: see [ADR 0020](./docs/adr/0020-issue-management-graphql.md)
 - `add_sub_issue` / `remove_sub_issue` — links or unlinks a sub-issue (also across repositories)
 - `comment_issue` — comments on an issue (e.g. final QA report)
-- `read_file` — reads a file's content on a branch (`branch`, or `ref` for a branch, tag or commit; default `main`)
-- `search_code` — searches code in the repository
+
+### Commit history and activity stats
+
 - `list_commits` — lists commits with author, dates, message and parents; filters by branch, path, author and date range; `include_stats` adds lines added/removed and changed files per commit (see [ADR 0016](./docs/adr/0016-commit-history-stats.md))
 - `get_commit` — reads one commit in full: stats and every changed file, optionally with each file's diff
 - `compare_commits` — compares two branches, tags or SHAs: ahead/behind, commits, changed files and totals
@@ -59,6 +101,9 @@ target. See [Available tools](#available-tools) below.
 - `search_commits` — the commits you authored across repositories, per linked account, with optional per-commit stats (default branches only)
 - `search_issues_prs` — the PRs and issues you authored, reviewed, merged, were assigned or commented on, across repositories, with totals per role; `include_stats` adds each PR's size
 - `get_activity_breakdown` — how much you changed in a period, private repositories included: commits, lines added/removed, files and PRs with their size — totals, by repository and by month; large periods are measured in batches (call again to continue) — see [ADR 0018](./docs/adr/0018-activity-breakdown-batches-and-cache.md)
+
+### Boards (GitHub Projects) — items
+
 - `list_projects` — the GitHub Projects (boards) of a user or organization
 - `get_project` — a project's fields, Status options, iterations, linked repositories and views
 - `list_project_items` — the items on a board with every field value, optionally filtered by one (e.g. `Status=In progress`)
@@ -67,6 +112,9 @@ target. See [Available tools](#available-tools) below.
 - `move_project_item` — moves an item after another one, or to the top
 - `archive_project_item` / `unarchive_project_item` — archives or restores an item (keeps its fields)
 - `remove_project_item` — removes an item from a board (the issue/PR itself is untouched) — board tools need the `project` scope: see [ADR 0019](./docs/adr/0019-projects-v2-board-tools.md)
+
+### Boards — structure
+
 - `create_project` / `update_project` — creates a board (optionally linked to a repository); edits title, description, README, visibility, closes or reopens it
 - `delete_project` — deletes a board; without `confirm: true` it only reports what would be lost
 - `link_project_repo` / `unlink_project_repo` — links or unlinks a repository
@@ -76,15 +124,20 @@ target. See [Available tools](#available-tools) below.
 - `delete_project_field` — deletes a custom field; without `confirm: true` it only reports how many items have a value
 - `list_project_views` / `create_project_view` / `update_project_view` / `delete_project_view` — a board's views: name, layout (table, board, roadmap), filter and visible fields (not on roadmap views; grouping and sorting can't be set through GitHub's API); deleting needs `confirm: true`
 - `list_project_status_updates` / `create_project_status_update` / `update_project_status_update` / `delete_project_status_update` — a board's status updates: on track, at risk, off track, inactive or complete, with start and target dates and text; deleting needs `confirm: true`
+
+### Labels, milestones and issue types
+
 - `list_labels` / `create_label` / `update_label` / `delete_label` — a repository's labels: create, rename, recolor, edit the description; deleting reports how many issues and PRs have it and needs `confirm: true`
 - `list_milestones` / `create_milestone` / `update_milestone` / `delete_milestone` — a repository's milestones: create, rename, description, due date, close or reopen; deleting reports how many issues and PRs would lose it and needs `confirm: true`
 - `list_issue_types` / `create_issue_type` / `update_issue_type` / `delete_issue_type` — an organization's issue types (changes need an organization owner and the `admin:org` scope — [ADR 0022](./docs/adr/0022-admin-org-scope.md)): create, rename, color, description, enable or disable; deleting reports how many issues use it and needs `confirm: true`
+
+### Accounts
+
 - `whoami` — shows which identity/account is being used in the current session
 - `link_account` — links an ADDITIONAL GitHub account to your session
 - `list_accounts` — lists the accounts linked to your session
 - `unlink_account` — removes an additional account from your session and revokes its token on GitHub (never your primary account)
 - `list_repos_by_account` — lists the repositories a specific linked account can access
-- `create_repo` — creates an empty repository for you or an organization; you always choose private or public (there is no tool to delete one)
 
 ### Editing a small chunk of a large file
 
